@@ -62,11 +62,11 @@ def test_severity_is_ordered() -> None:
 
 def test_log_entry_requires_tz_aware_and_normalizes_to_utc() -> None:
     plus3 = timezone(timedelta(hours=3))
-    entry = LogEntry("1", "s", datetime(2026, 1, 1, 12, tzinfo=plus3), Severity.INFO, "m", "r")
+    entry = LogEntry(1, "s", datetime(2026, 1, 1, 12, tzinfo=plus3), Severity.INFO, "m", "r")
     assert entry.timestamp == datetime(2026, 1, 1, 9, tzinfo=UTC)
     assert entry.timestamp.tzinfo is UTC
     with pytest.raises(ValueError, match="timezone-aware"):
-        LogEntry("1", "s", datetime(2026, 1, 1), Severity.INFO, "m", "r")
+        LogEntry(1, "s", datetime(2026, 1, 1), Severity.INFO, "m", "r")
 
 
 def test_models_are_deeply_immutable() -> None:

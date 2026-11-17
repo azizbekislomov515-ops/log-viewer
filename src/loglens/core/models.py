@@ -15,6 +15,8 @@ from typing import Any
 
 
 def _freeze(mapping: Mapping[str, Any]) -> Mapping[str, Any]:
+    if type(mapping) is MappingProxyType:  # already frozen by us (e.g. dataclasses.replace)
+        return mapping
     return MappingProxyType(dict(mapping))
 
 
@@ -155,10 +157,32 @@ class ServiceGroup:
 
 
 @dataclass(frozen=True, slots=True)
-class LogEntry:
-    """A single log line after collection. ``timestamp`` is always tz-aware UTC."""
+class RawRecord:
+    """One line as a collector produced it, before normalization.
 
-    id: str
+    ``cursor`` is an opaque, collector-specific resume position *after* this record
+    (journald ``__CURSOR``, Docker ``<ts_ns>:<n>``, file ``<dev>:<ino>:<offset>``).
+    Persisting it together with the record is what makes restarts duplicate-free.
+    ``fields`` is not frozen: records are short-lived and on the hot path.
+    """
+
+    source_id: str
+    message: str
+    timestamp: datetime | None = None
+    severity: Severity | None = None
+    fields: Mapping[str, Any] = field(default_factory=dict)
+    cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LogEntry:
+    """A single log line after collection. ``timestamp`` is always tz-aware UTC.
+
+    ``id`` is assigned by storage (monotonically increasing); 0 means "not stored yet",
+    negative ids mean storage was unavailable and the entry lives only in memory.
+    """
+
+    id: int
     source_id: str
     timestamp: datetime
     severity: Severity
