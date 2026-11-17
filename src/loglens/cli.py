@@ -17,6 +17,8 @@ from loglens.core.models import LogSource, SourceKind
 from loglens.core.registry import SourceRegistry
 
 _MAX_NAME_WIDTH = 40
+# C0 controls, DEL and C1 controls -> "?" so log-derived text can't drive the terminal.
+_CONTROL_CHARS = dict.fromkeys([*range(0x20), *range(0x7F, 0xA0)], "?")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -65,7 +67,12 @@ def render_table(registry: SourceRegistry) -> str:
             lines.append(f"  [{issue.severity.name.lower()}] {issue.discoverer}: {issue.message}")
             if issue.hint:
                 lines.append(f"      -> {issue.hint}")
-    return "\n".join(lines).rstrip() + "\n"
+    return "\n".join(_safe(line) for line in lines).rstrip() + "\n"
+
+
+def _safe(text: str) -> str:
+    """Neutralize terminal escape sequences in untrusted text (labels, stderr, descriptions)."""
+    return text.translate(_CONTROL_CHARS)
 
 
 def _detail(source: LogSource) -> str:

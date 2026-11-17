@@ -64,3 +64,16 @@ def test_empty_machine() -> None:
     out = io.StringIO()
     cmd_sources([FakeDiscoverer("d", [DiscoveryResult()])], as_json=False, out=out)
     assert out.getvalue() == "No log sources found.\n"
+
+
+def test_table_neutralizes_terminal_escapes() -> None:
+    evil = LogSource("docker:x", SourceKind.DOCKER_CONTAINER, "x\x1b]0;pwned\x07", "g",
+                     metadata={"image": "img\x1b[2J\x9b31m", "state": "running"})  # fmt: skip
+    group = ServiceGroup("g", "grp\x1b[1m", GroupKind.DOCKER_STANDALONE, (evil,))
+    out = io.StringIO()
+    cmd_sources([FakeDiscoverer("d", [DiscoveryResult((group,))])], as_json=False, out=out)
+    text = out.getvalue()
+    assert "\x1b" not in text
+    assert "\x9b" not in text
+    assert "\x07" not in text
+    assert "grp?[1m" in text
