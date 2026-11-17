@@ -1,20 +1,27 @@
-"""``loglens-cli``: command-line access to discovery (and later, other core features)."""
+"""``loglens-cli``: discover, tail, collect and search logs from the command line."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import dataclasses
 import json
 import logging
+import re
+import signal
 import sys
-from collections.abc import Sequence
-from datetime import datetime
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from enum import Enum, StrEnum
+from pathlib import Path
 from typing import Any, TextIO
 
+from loglens.collectors import Collector, default_collectors, source_from_id
 from loglens.collectors.discovery import Discoverer, default_discoverers
-from loglens.core.models import LogSource, SourceKind
+from loglens.core.models import LogEntry, LogSource, SourceKind
+from loglens.core.pipeline import IngestPipeline, normalize
 from loglens.core.registry import SourceRegistry
+from loglens.storage import Storage, StorageError, default_db_path
 
 _MAX_NAME_WIDTH = 40
 # C0 controls, DEL and C1 controls -> "?" so log-derived text can't drive the terminal.
@@ -24,14 +31,168 @@ _CONTROL_CHARS = dict.fromkeys([*range(0x20), *range(0x7F, 0xA0)], "?")
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``loglens-cli`` script."""
     parser = argparse.ArgumentParser(prog="loglens-cli", description=__doc__)
+    parser.add_argument("-v", "--verbose", action="store_true", help="log diagnostics to stderr")
     sub = parser.add_subparsers(dest="command", required=True)
+
     sources = sub.add_parser("sources", help="list discovered log sources grouped by service")
     sources.add_argument("--json", action="store_true", help="print JSON instead of a table")
-    parser.add_argument("-v", "--verbose", action="store_true", help="log diagnostics to stderr")
-    args = parser.parse_args(argv)
 
+    tail = sub.add_parser("tail", help="print a source's lines (does not store them)")
+    tail.add_argument("source_id", help="e.g. systemd:nginx.service, docker:web-1, file:/var/log/x")
+    tail.add_argument("--since", type=_since_arg, help="10m, 2h, 1d, or an ISO date/time")
+    tail.add_argument("-n", "--lines", type=int, default=10, help="backlog lines (default 10)")
+    tail.add_argument("-f", "--follow", action="store_true", help="keep printing new lines")
+
+    collect = sub.add_parser("collect", help="collect sources into the database until Ctrl-C")
+    collect.add_argument("source_ids", nargs="+", metavar="source_id")
+    collect.add_argument("--db", type=Path, help="database path (default: XDG data dir)")
+
+    search = sub.add_parser("search", help="full-text search collected entries")
+    search.add_argument("text")
+    search.add_argument("--source", action="append", default=[], help="limit to a source id")
+    search.add_argument("--limit", type=int, default=50)
+    search.add_argument("--db", type=Path, help="database path (default: XDG data dir)")
+
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING)
-    return cmd_sources(default_discoverers(), as_json=args.json, out=sys.stdout)
+    try:
+        match args.command:
+            case "sources":
+                return cmd_sources(default_discoverers(), as_json=args.json, out=sys.stdout)
+            case "tail":
+                return asyncio.run(
+                    cmd_tail(
+                        args.source_id,
+                        default_collectors(),
+                        since=args.since,
+                        lines=args.lines,
+                        follow=args.follow,
+                        out=sys.stdout,
+                    )
+                )
+            case "collect":
+                return asyncio.run(
+                    cmd_collect(args.source_ids, args.db or default_db_path(), out=sys.stdout)
+                )
+            case _:
+                return cmd_search(
+                    args.text,
+                    args.db or default_db_path(),
+                    source_ids=args.source,
+                    limit=args.limit,
+                    out=sys.stdout,
+                )
+    except KeyboardInterrupt:
+        return 130
+    except (ValueError, StorageError) as exc:
+        print(f"loglens-cli: error: {exc}", file=sys.stderr)
+        return 2
+
+
+async def cmd_tail(
+    source_id: str,
+    collectors: Mapping[SourceKind, Collector],
+    *,
+    since: datetime | None,
+    lines: int,
+    follow: bool,
+    out: TextIO,
+) -> int:
+    """Stream a source straight from its collector (nothing is stored)."""
+    source = source_from_id(source_id)
+    if since is not None and source.kind is SourceKind.FILE:
+        print("note: file lines have no parsed timestamps yet; --since is ignored, "
+              f"showing the last {lines} lines", file=sys.stderr)  # fmt: skip
+
+    def warn(_: str, exc: BaseException) -> None:
+        print(f"warning: {exc} (retrying)", file=sys.stderr)
+
+    stream = collectors[source.kind].stream(
+        source, since=since, lines=lines, follow=follow, on_error=warn
+    )
+    try:
+        async for record in stream:
+            out.write(format_entry(normalize(record)))
+            out.flush()
+    except Exception as exc:  # non-follow mode raises instead of retrying
+        print(f"loglens-cli: error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+async def cmd_collect(source_ids: Sequence[str], db_path: Path, *, out: TextIO) -> int:
+    """Collect sources into the database, printing entries as they are stored."""
+    sources = [source_from_id(s) for s in source_ids]
+    with Storage(db_path) as storage:
+        async with IngestPipeline(storage, default_collectors()) as pipeline:
+
+            def show(entries: Sequence[LogEntry]) -> None:
+                out.writelines(format_entry(e, with_source=True) for e in entries)
+                out.flush()
+
+            pipeline.subscribe(show)
+            for source in sources:
+                pipeline.add_source(source)
+            stop = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):  # flush and exit cleanly on both
+                loop.add_signal_handler(sig, stop.set)
+            print(f"collecting {len(sources)} source(s) into {db_path}; Ctrl-C to stop",
+                  file=sys.stderr)  # fmt: skip
+            await stop.wait()
+    print(f"stopped; {pipeline.stats.stored} entries stored", file=sys.stderr)
+    return 0
+
+
+def cmd_search(
+    text: str, db_path: Path, *, source_ids: Sequence[str], limit: int, out: TextIO
+) -> int:
+    """Print stored entries matching ``text``, newest first."""
+    if not db_path.exists():
+        print(f"no database at {db_path}; run 'loglens-cli collect' first", file=sys.stderr)
+        return 1
+    with Storage(db_path) as storage:
+        results = storage.search(text, source_ids=source_ids, limit=limit)
+    out.writelines(format_entry(e, with_source=True) for e in results)
+    if not results:
+        print("no matches", file=sys.stderr)
+    return 0
+
+
+def format_entry(entry: LogEntry, *, with_source: bool = False) -> str:
+    """One terminal line per entry; control characters neutralized."""
+    stamp = entry.timestamp.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    source = f" [{entry.source_id}]" if with_source else ""
+    stream = " (stderr)" if entry.fields.get("stream") == "stderr" else ""
+    line = f"{stamp} {entry.severity.name:<8}{source}{stream} {entry.message}"
+    return _safe(line) + "\n"
+
+
+_SINCE_RE = re.compile(r"^(\d+)\s*([smhdw])$")
+_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
+
+
+def parse_since(text: str, now: datetime | None = None) -> datetime:
+    """``10m``/``2h``/``1d``/``1w``/``30s`` ago, or an ISO date/time (local if naive).
+
+    Raises:
+        ValueError: if ``text`` is neither.
+    """
+    if match := _SINCE_RE.match(text.strip()):
+        delta = timedelta(**{_UNITS[match[2]]: int(match[1])})
+        return (now or datetime.now(UTC)) - delta
+    try:
+        moment = datetime.fromisoformat(text.strip())
+    except ValueError:
+        raise ValueError(f"invalid time {text!r}: use 10m, 2h, 1d or an ISO date/time") from None
+    return moment if moment.tzinfo else moment.astimezone()
+
+
+def _since_arg(text: str) -> datetime:
+    try:
+        return parse_since(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def cmd_sources(discoverers: Sequence[Discoverer], *, as_json: bool, out: TextIO) -> int:

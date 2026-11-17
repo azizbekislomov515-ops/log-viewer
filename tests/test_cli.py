@@ -1,18 +1,27 @@
 import io
 import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
 
 from loglens import __version__
-from loglens.cli import cmd_sources
+from loglens.cli import cmd_search, cmd_sources, cmd_tail, format_entry, main, parse_since
+from loglens.collectors import source_from_id
 from loglens.core.models import (
     DiscoveryIssue,
     DiscoveryResult,
     GroupKind,
+    LogEntry,
     LogSource,
+    RawRecord,
     ServiceGroup,
+    Severity,
     SourceKind,
     SourceStatus,
 )
-from tests.fakes import FakeDiscoverer
+from loglens.storage import Storage
+from tests.fakes import FakeCollector, FakeDiscoverer
 
 SOURCES = (
     LogSource("docker:shop-web-1", SourceKind.DOCKER_CONTAINER, "web", "compose:shop",
@@ -77,3 +86,81 @@ def test_table_neutralizes_terminal_escapes() -> None:
     assert "\x9b" not in text
     assert "\x07" not in text
     assert "grp?[1m" in text
+
+
+# --- Phase 2: tail / search / helpers ---------------------------------------------------
+
+NOW = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("10m", NOW - timedelta(minutes=10)),
+        ("2h", NOW - timedelta(hours=2)),
+        ("1d", NOW - timedelta(days=1)),
+        (" 30s", NOW - timedelta(seconds=30)),
+        ("2026-11-17T10:00:00+00:00", datetime(2026, 11, 17, 10, tzinfo=UTC)),
+    ],
+)
+def test_parse_since(text: str, expected: datetime) -> None:
+    assert parse_since(text, now=NOW) == expected
+
+
+def test_parse_since_naive_is_local_and_invalid_raises() -> None:
+    assert parse_since("2026-11-17 10:00").tzinfo is not None
+    with pytest.raises(ValueError, match="invalid time"):
+        parse_since("yesterday-ish")
+
+
+def test_source_from_id() -> None:
+    assert source_from_id("systemd:nginx.service").metadata["unit"] == "nginx.service"
+    assert source_from_id("docker:web-1").metadata["container_name"] == "web-1"
+    assert source_from_id("file:/var/log/x.log").metadata["path"] == "/var/log/x.log"
+    for bad in ["nginx", "file:relative.log", "ftp:x", "docker:"]:
+        with pytest.raises(ValueError, match="source"):
+            source_from_id(bad)
+
+
+def test_format_entry() -> None:
+    e = LogEntry(1, "docker:web", NOW, Severity.ERROR, "bad\x1b[31m", "", {"stream": "stderr"})
+    line = format_entry(e, with_source=True)
+    assert line.endswith(" ERROR    [docker:web] (stderr) bad?[31m\n")
+    assert "\x1b" not in line
+
+
+async def test_cmd_tail_prints_collector_output() -> None:
+    collector = FakeCollector([RawRecord("docker:web", "hello")], hang=False)
+    out = io.StringIO()
+    rc = await cmd_tail(
+        "docker:web", {SourceKind.DOCKER_CONTAINER: collector},
+        since=None, lines=3, follow=False, out=out,
+    )  # fmt: skip
+    assert rc == 0
+    assert out.getvalue().rstrip().endswith("INFO     hello")
+    assert collector.calls[0]["lines"] == 3
+    assert collector.calls[0]["follow"] is False
+
+
+async def test_cmd_tail_reports_errors() -> None:
+    collector = FakeCollector([PermissionError("denied")], hang=False)
+    rc = await cmd_tail(
+        "docker:web", {SourceKind.DOCKER_CONTAINER: collector},
+        since=None, lines=3, follow=False, out=io.StringIO(),
+    )  # fmt: skip
+    assert rc == 1
+
+
+def test_cmd_search(tmp_path: Path) -> None:
+    db = tmp_path / "x.db"
+    assert cmd_search("x", db, source_ids=[], limit=5, out=io.StringIO()) == 1  # no db yet
+    with Storage(db) as s:
+        s.write_batch([LogEntry(0, "file:/a", NOW, Severity.INFO, "denied 10.0.0.5", "")], {})
+    out = io.StringIO()
+    assert cmd_search("10.0.0.5", db, source_ids=[], limit=5, out=out) == 0
+    assert "[file:/a] denied 10.0.0.5" in out.getvalue()
+
+
+def test_main_rejects_bad_source_id(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["tail", "not-a-source"]) == 2
+    assert "invalid source id" in capsys.readouterr().err
