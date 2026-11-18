@@ -1,0 +1,33 @@
+time="2026-11-17T22:50:01Z" level=info msg="starting server" addr=:3000
+time="2026-11-17T22:50:02Z" level=warning msg="config file not found, using defaults" path=/etc/app.yaml
+time="2026-11-17T22:50:03Z" level=error msg="dial tcp 10.0.0.5:5432: connect: connection refused" component=db
+ts=2026-11-17T22:50:04.123Z caller=main.go:120 level=info msg="Starting Prometheus Server" mode=server
+ts=2026-11-17T22:50:05.456Z caller=compact.go:519 level=info component=tsdb msg="write block" duration=123.4ms
+t=2026-11-17T22:50:06+0000 lvl=info msg="HTTP Server Listen" logger=http.server address=[::]:3000
+t=2026-11-17T22:50:07+0000 lvl=eror msg="Failed to look up user" logger=context error="user not found"
+level=debug ts=2026-11-17T22:50:08Z msg="tick" n=1
+level=info ts=2026-11-17T22:50:09.000000001Z caller=loki.go:400 msg="Loki started"
+at=info method=GET path="/" host=app.herokuapp.com request_id=abc fwd="1.2.3.4" dyno=web.1 connect=0ms service=3ms status=200 bytes=1234
+at=error code=H12 desc="Request timeout" method=GET path="/slow" host=app.herokuapp.com status=503
+time="2026-11-17T22:50:12Z" level=fatal msg="cannot start: port in use"
+time="2026-11-17T22:50:13Z" level=panic msg="nil pointer dereference"
+time="2026-11-17T22:50:14Z" level=trace msg="very chatty"
+time="2026-11-17T22:50:15Z" level=info msg="escaped \"quotes\" inside" user="o'brien"
+time="2026-11-17T22:50:16Z" level=info msg="newline\nescape" tab="a\tb"
+time="2026-11-17T22:50:17Z" level=info msg="go escape \x41" k=v
+time="2026-11-17T22:50:18Z" level=info msg= empty=""
+time="2026-11-17T22:50:19Z" level=info msg="unicode ✓ ok" emoji="🚀"
+time="2026-11-17T22:50:20+05:00" level=warning msg="offset time"
+time=1794955821 level=info msg="epoch seconds"
+time=1794955822123 level=info msg="epoch millis"
+time="2026-11-17 22:50:23" level=info msg="space separated, naive local"
+level=info msg="no time"
+msg="only message" k=v
+foo=bar baz=qux
+time="not a time" level=info msg="bad time"
+time="2026-11-17T22:50:28Z" level=info msg="unterminated
+just text with a=b in it
+a=b
+key=value trailing words
+=novalue k=v
+time="2026-11-17T22:50:31Z"   level=info   msg="extra spaces"

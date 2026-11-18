@@ -1,0 +1,32 @@
+2026-11-17 22:50:01,123 INFO [main] com.example.App - Application starting
+2026-11-17 22:50:01,456 DEBUG [main] com.example.Config - Loaded 42 properties
+2026-11-17 22:50:02,001 WARN [pool-1-thread-3] com.example.Cache - Cache nearly full (95%)
+2026-11-17 22:50:03,000 ERROR [http-nio-8080-exec-1] com.example.Api - Request failed
+2026-11-17T22:50:04.123Z INFO request handled in 12ms
+2026-11-17T22:50:05.123456+05:00 ERROR something bad
+2026-11-17T22:50:06Z [WARN] disk usage high
+2026-11-17 22:50:07.000 [ERROR] worker crashed
+[2026-11-17 22:50:08] production.ERROR: SQLSTATE[HY000] [2002] Connection refused
+[2026-11-17T22:50:09.000Z] INFO: bracketed timestamp
+2026-11-17 22:50:10,123 - root - ERROR - python logging default-ish
+2026-11-17 22:50:11,123 fail2ban.filter         [2209]: INFO    [sshd] Found 203.0.113.9 - 2026-11-17 22:50:11
+2026-11-17 22:50:12,456 fail2ban.actions        [2209]: NOTICE  [sshd] Ban 203.0.113.9
+2026-11-17 22:50:13 1 [Warning] Aborted connection 12 to db: 'app' user: 'app' host: '10.0.0.5' (Got an error reading communication packets)
+2026-11-17T22:50:14.123+0000 I  NETWORK  [listener] Listening on 0.0.0.0
+2026/11/17 22:50:15 http: TLS handshake error from 10.0.0.9:51234: EOF
+2026/11/17 22:50:16 [notice] go-style with slashes
+2026-11-17 22:50:17 UTC [123] LOG:  database system is ready to accept connections
+2026-11-17 22:50:18.555 UTC [124] FATAL:  role "x" does not exist
+2026-11-17T22:50:19Z CRITICAL disk failure imminent
+2026-11-17T22:50:20Z TRACE entering function
+2026-11-17T22:50:21Z FATAL could not bind
+2026-11-17T22:50:22Z level token is far away from the timestamp so it should not count as a level ERROR
+2026-11-17T22:50:23Z
+2026-11-17T22:50:24Z Information is not a level token
+2026-11-17T22:50:25,5Z INFO comma fraction with zulu
+2026-11-17 22:50:26.123456789 INFO nanoseconds
+2026-13-45 25:61:00 ERROR impossible date
+2026-11-17T22:50:28Zjunk glued text
+20261117 225029 not iso basic format
+2026-11-17
+Nov 17 22:50:30 not iso

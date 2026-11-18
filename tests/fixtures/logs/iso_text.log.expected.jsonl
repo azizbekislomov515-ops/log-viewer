@@ -1,0 +1,32 @@
+{"fields": {"level": "INFO"}, "message": "[main] com.example.App - Application starting", "parsed": true, "parser": "iso_text", "severity": "INFO", "ts": "2026-11-17T22:50:01.123000+00:00"}
+{"fields": {"level": "DEBUG"}, "message": "[main] com.example.Config - Loaded 42 properties", "parsed": true, "parser": "iso_text", "severity": "DEBUG", "ts": "2026-11-17T22:50:01.456000+00:00"}
+{"fields": {"level": "WARN"}, "message": "[pool-1-thread-3] com.example.Cache - Cache nearly full (95%)", "parsed": true, "parser": "iso_text", "severity": "WARNING", "ts": "2026-11-17T22:50:02.001000+00:00"}
+{"fields": {"level": "ERROR"}, "message": "[http-nio-8080-exec-1] com.example.Api - Request failed", "parsed": true, "parser": "iso_text", "severity": "ERROR", "ts": "2026-11-17T22:50:03+00:00"}
+{"fields": {"level": "INFO"}, "message": "request handled in 12ms", "parsed": true, "parser": "iso_text", "severity": "INFO", "ts": "2026-11-17T22:50:04.123000+00:00"}
+{"fields": {"level": "ERROR"}, "message": "something bad", "parsed": true, "parser": "iso_text", "severity": "ERROR", "ts": "2026-11-17T17:50:05.123456+00:00"}
+{"fields": {"level": "WARN"}, "message": "disk usage high", "parsed": true, "parser": "iso_text", "severity": "WARNING", "ts": "2026-11-17T22:50:06+00:00"}
+{"fields": {"level": "ERROR"}, "message": "worker crashed", "parsed": true, "parser": "iso_text", "severity": "ERROR", "ts": "2026-11-17T22:50:07+00:00"}
+{"fields": {"level": "ERROR"}, "message": "production.ERROR: SQLSTATE[HY000] [2002] Connection refused", "parsed": true, "parser": "iso_text", "severity": "ERROR", "ts": "2026-11-17T22:50:08+00:00"}
+{"fields": {"level": "INFO"}, "message": "bracketed timestamp", "parsed": true, "parser": "iso_text", "severity": "INFO", "ts": "2026-11-17T22:50:09+00:00"}
+{"fields": {"level": "ERROR"}, "message": "root - ERROR - python logging default-ish", "parsed": true, "parser": "iso_text", "severity": "ERROR", "ts": "2026-11-17T22:50:10.123000+00:00"}
+{"fields": {"level": "INFO"}, "message": "fail2ban.filter         [2209]: INFO    [sshd] Found 203.0.113.9 - 2026-11-17 22:50:11", "parsed": true, "parser": "iso_text", "severity": "INFO", "ts": "2026-11-17T22:50:11.123000+00:00"}
+{"fields": {"level": "NOTICE"}, "message": "fail2ban.actions        [2209]: NOTICE  [sshd] Ban 203.0.113.9", "parsed": true, "parser": "iso_text", "severity": "NOTICE", "ts": "2026-11-17T22:50:12.456000+00:00"}
+{"fields": {"level": "Warning"}, "message": "1 [Warning] Aborted connection 12 to db: 'app' user: 'app' host: '10.0.0.5' (Got an error reading communication packets)", "parsed": true, "parser": "iso_text", "severity": "WARNING", "ts": "2026-11-17T22:50:13+00:00"}
+{"fields": {}, "message": "I  NETWORK  [listener] Listening on 0.0.0.0", "parsed": true, "parser": "iso_text", "severity": "INFO", "ts": "2026-11-17T22:50:14.123000+00:00"}
+{"fields": {}, "message": "http: TLS handshake error from 10.0.0.9:51234: EOF", "parsed": true, "parser": "iso_text", "severity": "ERROR", "ts": "2026-11-17T22:50:15+00:00"}
+{"fields": {"level": "notice"}, "message": "go-style with slashes", "parsed": true, "parser": "iso_text", "severity": "NOTICE", "ts": "2026-11-17T22:50:16+00:00"}
+{"fields": {}, "message": "UTC [123] LOG:  database system is ready to accept connections", "parsed": true, "parser": "iso_text", "severity": "INFO", "ts": "2026-11-17T22:50:17+00:00"}
+{"fields": {"level": "FATAL"}, "message": "UTC [124] FATAL:  role \"x\" does not exist", "parsed": true, "parser": "iso_text", "severity": "CRITICAL", "ts": "2026-11-17T22:50:18.555000+00:00"}
+{"fields": {"level": "CRITICAL"}, "message": "disk failure imminent", "parsed": true, "parser": "iso_text", "severity": "CRITICAL", "ts": "2026-11-17T22:50:19+00:00"}
+{"fields": {"level": "TRACE"}, "message": "entering function", "parsed": true, "parser": "iso_text", "severity": "TRACE", "ts": "2026-11-17T22:50:20+00:00"}
+{"fields": {"level": "FATAL"}, "message": "could not bind", "parsed": true, "parser": "iso_text", "severity": "CRITICAL", "ts": "2026-11-17T22:50:21+00:00"}
+{"fields": {}, "message": "level token is far away from the timestamp so it should not count as a level ERROR", "parsed": true, "parser": "iso_text", "severity": "ERROR", "ts": "2026-11-17T22:50:22+00:00"}
+{"fields": {}, "message": "", "parsed": true, "parser": "iso_text", "severity": "INFO", "ts": "2026-11-17T22:50:23+00:00"}
+{"fields": {}, "message": "Information is not a level token", "parsed": true, "parser": "iso_text", "severity": "INFO", "ts": "2026-11-17T22:50:24+00:00"}
+{"fields": {"level": "INFO"}, "message": "comma fraction with zulu", "parsed": true, "parser": "iso_text", "severity": "INFO", "ts": "2026-11-17T22:50:25.500000+00:00"}
+{"fields": {"level": "INFO"}, "message": "nanoseconds", "parsed": true, "parser": "iso_text", "severity": "INFO", "ts": "2026-11-17T22:50:26.123456+00:00"}
+{"fields": {"bad_timestamp": "2026-13-45 25:61:00", "level": "ERROR"}, "message": "impossible date", "parsed": true, "parser": "iso_text", "severity": "ERROR", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "2026-11-17T22:50:28Zjunk glued text", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "20261117 225029 not iso basic format", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "2026-11-17", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"host": "not"}, "message": "iso", "parsed": true, "parser": "syslog", "severity": "INFO", "ts": "2026-11-17T22:50:30+00:00"}

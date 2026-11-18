@@ -1,0 +1,35 @@
+time="2026-11-18T20:07:04.101010101+05:00" level=info msg="Starting up"
+time="2026-11-18T20:07:04.202020202+05:00" level=info msg="detected 127.0.0.53 nameserver, assuming systemd-resolved, so using resolv.conf: /run/systemd/resolve/resolv.conf"
+time="2026-11-18T20:07:04.303030303+05:00" level=info msg="[graphdriver] using prior storage driver: overlay2"
+time="2026-11-18T20:07:05.313363211+05:00" level=info msg="Loading containers: start."
+time="2026-11-18T20:07:05.872136012+05:00" level=info msg="Loading containers: done."
+time="2026-11-18T20:07:05.883915347+05:00" level=info msg="Docker daemon" commit=3ef3c07c883be49a2e8097bcf6d2952fce1d70eb containerd-snapshotter=false storage-driver=overlay2 version=28.5.2+dfsg4
+time="2026-11-18T20:07:05.884336918+05:00" level=info msg="Initializing buildkit"
+time="2026-11-18T20:07:06.962570539+05:00" level=info msg="Completed buildkit initialization"
+time="2026-11-18T20:07:06.964398116+05:00" level=info msg="Daemon has completed initialization"
+time="2026-11-18T20:07:06.964419638+05:00" level=info msg="API listen on /run/docker.sock"
+time="2026-11-18T20:10:00.000000001+05:00" level=info msg="ignoring event" container=4f1e2d3c4b5a module=libcontainerd namespace=moby topic=/tasks/delete type="*events.TaskDelete"
+time="2026-11-18T20:10:00.100000000+05:00" level=info msg="shim disconnected" id=4f1e2d3c4b5a namespace=moby
+time="2026-11-18T20:10:00.200000000+05:00" level=warning msg="cleaning up after shim disconnected" id=4f1e2d3c4b5a namespace=moby
+time="2026-11-18T20:10:00.300000000+05:00" level=info msg="cleaning up dead shim" namespace=moby
+time="2026-11-18T20:11:00.000000000+05:00" level=info msg="Container failed to exit within 10s of signal 15 - using the force" container=9a8b7c6d5e4f
+time="2026-11-18T20:11:10.000000000+05:00" level=info msg="ignoring event" container=9a8b7c6d5e4f module=libcontainerd namespace=moby topic=/tasks/exit type="*events.TaskExit"
+time="2026-11-18T20:12:00.000000000+05:00" level=info msg="ignoring event" container=1122334455aa module=libcontainerd namespace=moby topic=/tasks/oom type="*events.TaskOOM"
+time="2026-11-18T20:12:30.000000000+05:00" level=info msg="stopping event stream following graceful shutdown" error="<nil>" module=libcontainerd namespace=moby
+time="2026-11-18T20:13:00.000000000+05:00" level=warning msg="Health check for container 2b3c4d5e6f70 error: OCI runtime exec failed: exec failed: unable to start container process: exec: \"curl\": executable file not found in $PATH: unknown"
+time="2026-11-18T20:13:30.000000000+05:00" level=error msg="Handler for POST /v1.47/containers/abc/start returned error: driver failed programming external connectivity on endpoint web-1: Bind for 0.0.0.0:80 failed: port is already allocated"
+time="2026-11-18T20:14:00.000000000+05:00" level=info msg="starting signal loop" namespace=moby path=/run/containerd/io.containerd.runtime.v2.task/moby/7788 pid=4455 runtime=io.containerd.runc.v2
+time="2026-11-18T20:15:00.000000000+05:00" level=warning msg="Your kernel does not support cgroup blkio weight"
+time="2026-11-18T20:16:00.000000000+05:00" level=info msg="Processing signal 'terminated'"
+time="2026-11-18T20:16:01.000000000+05:00" level=info msg="Daemon shutdown complete"
+time="2026-11-18T20:17:00.000000000+05:00" level=error msg="failed to start daemon: Error initializing network controller: error obtaining controller instance: failed to register \"bridge\" driver"
+time="2026-11-18T20:17:01.000000000+05:00" level=fatal msg="Error starting daemon: pid file found, ensure docker is not running or delete /var/run/docker.pid"
+time="2026-11-18T20:18:00.000000000+05:00" level=info msg="ignoring event" container=deadbeef0001 module=libcontainerd namespace=moby topic=/tasks/start type="*events.TaskStart"
+time="2026-11-18T20:19:00.000000000+05:00" level=warning msg="Container 77aa memory usage hit OOM" container=77aa
+Nov 18 20:20:00 kali dockerd[7277]: time="2026-11-18T20:20:00.000000000+05:00" level=info msg="API listen on /run/docker.sock"
+Nov 18 20:20:01 kali dockerd[7277]: time="2026-11-18T20:20:01.000000000+05:00" level=error msg="syslog wrapped error" container=ffee
+Started docker.service - Docker Application Container Engine.
+time="2026-11-18T20:21:00" level=info msg="naive timestamp"
+time="garbage" level=info msg="bad time"
+level=info
+time="2026-11-18T20:22:00Z" level=info msg="unterminated

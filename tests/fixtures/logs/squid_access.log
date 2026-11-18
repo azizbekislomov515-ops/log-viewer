@@ -1,0 +1,35 @@
+1794955801.123    245 10.0.0.5 TCP_MISS/200 5123 GET http://example.com/index.html - HIER_DIRECT/93.184.216.34 text/html
+1794955801.456      0 10.0.0.5 TCP_DENIED/403 3922 CONNECT facebook.com:443 - HIER_NONE/- text/html
+1794955802.001     12 10.0.0.7 TCP_HIT/200 18432 GET http://deb.debian.org/debian/dists/bookworm/InRelease - HIER_NONE/- application/octet-stream
+1794955802.317  60012 10.0.0.9 TCP_TUNNEL/200 48213 CONNECT api.github.com:443 - HIER_DIRECT/140.82.121.6 -
+1794955803.540    188 10.0.0.5 TCP_MISS/304 412 GET http://www.example.org/style.css - HIER_DIRECT/93.184.215.14 -
+1794955803.912      1 10.0.0.12 TCP_DENIED/407 4045 GET http://neverssl.com/ - HIER_NONE/- text/html
+1794955804.100    340 10.0.0.12 TCP_MISS/200 9811 GET http://neverssl.com/ alice HIER_DIRECT/34.223.124.45 text/html
+1794955804.777      0 10.0.0.13 TCP_DENIED/403 3887 CONNECT www.tiktok.com:443 bob HIER_NONE/- text/html
+1794955805.020   1523 10.0.0.5 TCP_MISS/502 3990 GET http://intranet.local/health - HIER_DIRECT/10.0.5.20 text/html
+1794955805.399     95 10.0.0.7 TCP_REFRESH_UNMODIFIED/200 22541 GET http://security.debian.org/debian-security/dists/bookworm-security/InRelease - HIER_DIRECT/151.101.2.132 application/octet-stream
+1794955806.000      0 10.0.0.21 NONE_NONE/400 3812 NONE error:invalid-request - HIER_NONE/- text/html
+1794955806.250    410 192.168.10.44 TCP_MISS/200 734 POST http://collector.example.net/v1/metrics - HIER_DIRECT/203.0.113.80 application/json
+1794955806.611  30001 10.0.0.9 TCP_MISS_ABORTED/000 0 GET http://slow.example.com/big.iso - HIER_DIRECT/198.51.100.7 -
+1794955807.002      2 10.0.0.5 TCP_MEM_HIT/200 1201 GET http://example.com/favicon.ico - HIER_NONE/- image/x-icon
+1794955807.431  12044 10.0.0.30 TCP_TUNNEL/200 1048576 CONNECT update.googleapis.com:443 - HIER_DIRECT/142.250.185.163 -
+1794955807.900      0 10.0.0.31 TCP_DENIED/403 3902 GET http://ads.doubleclick.net/pixel.gif - HIER_NONE/- text/html
+1794955808.123     77 10.0.0.31 TCP_MISS/404 512 GET http://example.com/missing - HIER_DIRECT/93.184.216.34 text/html
+1794955808.640    233 fe80::1 TCP_MISS/200 2048 GET http://[2001:db8::10]/status - HIER_DIRECT/2001:db8::10 text/plain
+1794955809.010      0 10.0.0.5 TCP_DENIED/403 3922 CONNECT www.facebook.com:443 - HIER_NONE/- text/html
+1794955809.555    911 10.0.0.40 TCP_MISS/503 4100 GET http://down.example.com/ - HIER_DIRECT/203.0.113.99 text/html
+1794955810.000    120 10.0.0.41 TCP_MISS/200 650 HEAD http://example.com/ - HIER_DIRECT/93.184.216.34 -
+1794955810.321   5021 10.0.0.42 TCP_TUNNEL/200 66123 CONNECT 140.82.121.4:443 - HIER_DIRECT/140.82.121.4 -
+1794955810.800      0 10.0.0.43 TCP_DENIED/403 3870 CONNECT torproject.org:443 carol HIER_NONE/- text/html
+1794955811.111     55 10.0.0.44 TCP_INM_HIT/304 300 GET http://cdn.example.com/lib.js - HIER_NONE/- application/javascript
+1794955811.600    300 10.0.0.45 TCP_MISS/200 120 PUT http://api.example.com/items/7 - HIER_DIRECT/198.51.100.20 application/json
+1794955812.000    150 10.0.0.46 TCP_MISS/301 401 GET http://example.com/old - HIER_DIRECT/93.184.216.34 text/html
+1794955812.500     99 10.0.0.47 TCP_MISS/200 900 GET http://example.com/a b - HIER_DIRECT/93.184.216.34 text/html
+1794955813.001    210 10.0.0.48 TCP_MISS/200 5000 GET http://example.com/x - HIER_DIRECT/93.184.216.34 text/html "Mozilla/5.0"
+10.0.0.50 - - [17/Nov/2026:22:50:14 +0000] "GET http://example.com/ HTTP/1.1" 200 5123 "-" "curl/8.5.0" TCP_MISS:HIER_DIRECT
+1794955814.abc    210 10.0.0.48 TCP_MISS/200 5000 GET http://example.com/x - HIER_DIRECT/93.184.216.34 text/html
+1794955815.000 210 10.0.0.48 TCP_MISS/2000 5000 GET http://example.com/x - HIER_DIRECT/93.184.216.34 text/html
+1794955815.500    210 10.0.0.48 TCP_MISS/200
+squid: no such thing as a valid line here
+
+�\x00binary
