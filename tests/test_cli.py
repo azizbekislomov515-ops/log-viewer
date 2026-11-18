@@ -208,3 +208,13 @@ async def test_cmd_tail_flushes_pending_line_when_source_goes_idle() -> None:
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
+
+
+def test_format_entry_neutralizes_escapes_in_every_part() -> None:
+    entry = LogEntry(
+        1, "docker:\x1b]0;pwned\x07", datetime(2026, 1, 1, tzinfo=UTC), Severity.INFO,
+        "a\x1b[2Jb\nc\x1b[31m", "raw", {"k": "\x1b[1m"},
+    )  # fmt: skip
+    text = format_entry(entry, with_source=True, with_fields=True)
+    assert "\x1b" not in text and "\x07" not in text
+    assert text.count("\n") == 3  # head line, one continuation, fields line

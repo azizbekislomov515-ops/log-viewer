@@ -1,6 +1,7 @@
 """Property-based tests: no parser, the normalizer or the assembler may crash on any input,
 and the raw text always survives."""
 
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -104,3 +105,28 @@ def test_assembler_never_loses_or_reorders_text(lines: list[str]) -> None:
     assert [e.cursor for e in out] == sorted({e.cursor for e in out}, key=lambda c: int(c or 0))
     if out:
         assert out[-1].cursor == records[-1].cursor
+
+
+N = 64 * 1024  # MAX_MESSAGE_CHARS: the longest line the normalizer ever sees
+CRAFTED = {
+    "dotted": "a." * (N // 2),  # Java exception regex used to be quadratic here
+    "colons": "a: " * (N // 3) + "FOUND",  # ClamAV ".+?: x FOUND$" used to be quadratic
+    "colons-error": "Tue Nov 17 22:50:01 2026 -> " + "a: " * (N // 3) + "ERROR",
+    "nginx-ctx": "2026/11/17 22:50:01 [error] 1#1: " + ", client: " * (N // 10),
+    "trace": "Traceback (most recent call last):\n  x\n" + "a." * (N // 2),
+    "java": "x\n\tat y\n" + "a." * (N // 2),
+    "brackets": "<14>1 2026-11-17T22:50:01Z h a 1 m " + "[a" * (N // 2),
+    "logfmt": 'a="' * (N // 3),
+}
+
+
+@pytest.mark.parametrize("name", sorted(CRAFTED))
+def test_crafted_long_lines_parse_in_linear_time(name: str) -> None:
+    normalize, assembler = Normalizer(), MultilineAssembler()
+    for source in SOURCES:
+        start = time.perf_counter()
+        normalize(source, RawRecord(source.id, CRAFTED[name]))
+        for line in CRAFTED[name].split("\n"):
+            assembler.feed(RawRecord(source.id, line), 0.0)
+        assembler.flush()
+        assert time.perf_counter() - start < 0.5, f"{name} on {source.id}"

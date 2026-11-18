@@ -7,6 +7,9 @@ Precedence rules:
   which is flagged ``timestamp_source="ingest"`` so ordering by it is known to be weak.
 * **severity**: the line's own level (parser) > the source's (journald ``PRIORITY``) >
   ERROR for an assembled stack trace > keyword inference > INFO.
+* **fields**: normalizer-computed (``parser``, ``truncated``, ``timestamp_source``) >
+  collector fields (journald trusted ``_*`` fields, Docker ``stream``, assembler ``lines``)
+  > exception fields > parser fields. Log text can't overwrite source metadata.
 * **message/raw**: ``raw`` is always the collected text (capped); ``message`` is the
   parser's cleaned message, or the raw text when nothing parsed it.
 """
@@ -20,6 +23,8 @@ from loglens.parsers.base import ParserRegistry
 from loglens.parsers.multiline import exception_fields
 from loglens.parsers.severity import SeverityInferrer
 
+#: Field names only the normalizer/assembler may set.
+_RESERVED = frozenset({"parser", "truncated", "timestamp_source", "lines"})
 #: Longest message kept; anything longer is cut and flagged ``truncated``.
 MAX_MESSAGE_CHARS = 64 * 1024
 
@@ -41,17 +46,21 @@ class Normalizer:
 
     def __call__(self, source: LogSource, record: RawRecord) -> LogEntry:
         """Parse and normalize one record (see the module docstring for precedence)."""
-        fields = dict(record.fields)
-        if len(record.message) > MAX_MESSAGE_CHARS:
+        truncated = len(record.message) > MAX_MESSAGE_CHARS
+        if truncated:
             record = replace(record, message=record.message[:MAX_MESSAGE_CHARS])
-            fields["truncated"] = True
         text = record.message
         name, parsed = self._registry.parse(source, record)
-        fields.update(parsed.fields)
+        trace = exception_fields(text) if "\n" in text else {}
+        # Precedence: what we computed > what the collector reported (journald's trusted
+        # _PID/_SYSTEMD_UNIT, Docker's stream) > what the log line claims about itself.
+        # A line must never be able to forge source metadata.
+        claimed = {k: v for k, v in parsed.fields.items() if k not in _RESERVED}
+        fields = {**claimed, **trace, **record.fields}
         if name is not None:
             fields["parser"] = name
-        trace = exception_fields(text) if "\n" in text else {}
-        fields.update(trace)
+        if truncated:
+            fields["truncated"] = True
 
         timestamp = parsed.timestamp or record.timestamp
         if timestamp is None:

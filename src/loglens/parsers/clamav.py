@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from loglens.core.models import LogSource, RawRecord, Severity
 from loglens.parsers.base import ParsedFields, SourceMatch, events, match_event, unparsed
@@ -15,9 +16,6 @@ _SIGS = r"\(version: (?P<version>\d+), sigs: (?P<signatures>\d+)"
 
 E, W, INFO = Severity.ERROR, Severity.WARNING, Severity.INFO
 _EVENTS = events(
-    ("virus_found", r"(?P<file>.+?): (?P<signature>\S+) FOUND$", E),
-    ("scan_error", r"(?P<file>.+?): (?P<error>.+) ERROR$", E),
-    ("scan_clean", r"(?P<file>.+?): OK$", INFO),
     ("error", r"(?:ERROR: |!|LibClamAV Error: )(?P<error>.*)", E),
     ("warning", r"(?:WARNING: |\^|LibClamAV Warning: )(?P<warning>.*)", W),
     ("selfcheck_ok", r"SelfCheck: Database status OK", INFO),
@@ -51,6 +49,24 @@ _EVENTS = events(
 _INT_FIELDS = ("signatures", "version", "local_version")
 
 
+def scan_result(body: str) -> tuple[str, Severity | None, dict[str, Any]] | None:
+    """``<file>: <sig> FOUND`` / ``<file>: <reason> ERROR`` / ``<file>: OK``.
+
+    String methods, not regexes: ``.+?: ...$`` is quadratic on a crafted line.
+    """
+    if body.endswith(" FOUND"):
+        file, sep, signature = body[:-6].rpartition(": ")
+        if sep and file and signature and " " not in signature:
+            return "virus_found", E, {"file": file, "signature": signature}
+    elif body.endswith(" ERROR"):
+        file, sep, error = body[:-6].partition(": ")
+        if sep and file and error:
+            return "scan_error", E, {"file": file, "error": error}
+    elif body.endswith(": OK") and len(body) > 4:
+        return "scan_clean", INFO, {"file": body[:-4]}
+    return None
+
+
 class ClamavParser:
     """clamd and freshclam log lines (files, units, containers)."""
 
@@ -71,17 +87,19 @@ class ClamavParser:
         text = record.message
         prefix = _PREFIX.match(text)
         body = text[prefix.end() :] if prefix else text
-        found = match_event(body, _EVENTS)
+        found = scan_result(body)
+        if found is None and (event := match_event(body, _EVENTS)) is not None:
+            found = (event[0].event, event[0].severity, event[1])
         if prefix is None and found is None:
             return unparsed()
         result = ParsedFields(True, message=body)
         if found is not None:
-            pattern, fields = found
-            for key in _INT_FIELDS:
-                if key in fields:
-                    fields[key] = int(fields[key])
-            result.fields = {"event": pattern.event, **fields}
-            result.severity = pattern.severity
+            name, severity, fields = found
+            result.fields = {
+                "event": name,
+                **{k: int(v) if k in _INT_FIELDS else v for k, v in fields.items()},
+            }
+            result.severity = severity
         if prefix is not None:
             result.timestamp = parse_ctime(prefix["ts"])
             if result.timestamp is None:

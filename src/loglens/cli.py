@@ -171,7 +171,7 @@ def format_entry(entry: LogEntry, *, with_source: bool = False, with_fields: boo
     stamp = entry.timestamp.astimezone().strftime("%Y-%m-%d %H:%M:%S")
     source = f" [{entry.source_id}]" if with_source else ""
     stream = " (stderr)" if entry.fields.get("stream") == "stderr" else ""
-    head = f"{stamp} {entry.severity.name:<8}{source}{stream} "
+    head = _safe(f"{stamp} {entry.severity.name:<8}{source}{stream} ")
     lines = [_safe(line) for line in entry.message.split("\n")]
     text = head + "\n    ".join(lines) + "\n"
     if with_fields:

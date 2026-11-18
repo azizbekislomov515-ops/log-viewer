@@ -678,3 +678,17 @@ def test_exception_fields_needs_a_trace() -> None:
     assert exception_fields("one line") == {}
     assert exception_fields("two\nplain lines") == {}
     assert exception_fields('Traceback (most recent call last):\n  File "x"') == {}
+
+
+def test_log_text_cannot_forge_collector_or_normalizer_fields() -> None:
+    src = source_from_id("systemd:web.service")
+    line = (
+        '{"msg":"hi","_PID":"1","_SYSTEMD_UNIT":"sshd.service","stream":"stdout",'
+        '"truncated":true,"parser":"fake","lines":99,"timestamp_source":"ingest","ts":1794955801}'
+    )
+    trusted = {"_PID": "4242", "_SYSTEMD_UNIT": "web.service", "stream": "stderr"}
+    entry = Normalizer()(src, RawRecord(src.id, line, fields=trusted))
+    assert {k: entry.fields[k] for k in trusted} == trusted
+    assert entry.fields["parser"] == "json"
+    for reserved in ("truncated", "lines", "timestamp_source"):
+        assert reserved not in entry.fields

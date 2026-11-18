@@ -41,6 +41,8 @@ _PY_CHAIN = frozenset(
     }
 )
 _PY_EXCEPTION = re.compile(r"([A-Za-z_][\w.]*)(?::\s?(.*))?", re.DOTALL)
+#: Exception lines are short; longer lines are never matched (keeps the regex linear).
+_MAX_EXCEPTION_LINE = 1024
 _JAVA_EXCEPTION = re.compile(
     r"(?:Exception in thread \"[^\"]*\" )?"
     r"((?:[a-z_$][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error|Throwable)[\w$]*)(?::\s?(.*))?",
@@ -153,9 +155,18 @@ def is_continuation(line: str, *, in_traceback: bool, after_indented: bool) -> b
         return True
     if line.startswith("Caused by: "):
         return True
-    if _JAVA_EXCEPTION.fullmatch(line) and not line.startswith("Exception in thread "):
+    if (
+        len(line) <= _MAX_EXCEPTION_LINE
+        and _JAVA_EXCEPTION.fullmatch(line)
+        and not line.startswith("Exception in thread ")
+    ):
         return True
-    return in_traceback and after_indented and _PY_EXCEPTION.fullmatch(line) is not None
+    return (
+        in_traceback
+        and after_indented
+        and len(line) <= _MAX_EXCEPTION_LINE
+        and _PY_EXCEPTION.fullmatch(line) is not None
+    )
 
 
 def exception_fields(text: str) -> dict[str, Any]:
@@ -169,7 +180,12 @@ def exception_fields(text: str) -> dict[str, Any]:
         return {}
     if any(line.startswith(PY_TRACEBACK) for line in lines):
         for line in reversed(lines):
-            if line and line[0] not in " \t" and (m := _PY_EXCEPTION.fullmatch(line)):
+            if (
+                line
+                and line[0] not in " \t"
+                and len(line) <= _MAX_EXCEPTION_LINE
+                and (m := _PY_EXCEPTION.fullmatch(line))
+            ):
                 return {
                     "exception_type": m[1],
                     "exception_message": m[2] or "",
@@ -182,7 +198,8 @@ def exception_fields(text: str) -> dict[str, Any]:
         return {}
     causes = [line.removeprefix("Caused by: ") for line in lines if line.startswith("Caused by: ")]
     for candidate in [*reversed(causes), *lines]:
-        if m := _JAVA_EXCEPTION.search(candidate):
+        # Anchored match, not search: search over a crafted line is quadratic.
+        if len(candidate) <= _MAX_EXCEPTION_LINE and (m := _JAVA_EXCEPTION.match(candidate)):
             return {
                 "exception_type": m[1],
                 "exception_message": (m[2] or "").strip(),
