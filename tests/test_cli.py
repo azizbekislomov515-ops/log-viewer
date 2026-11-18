@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import io
 import json
 from datetime import UTC, datetime, timedelta
@@ -164,3 +166,45 @@ def test_cmd_search(tmp_path: Path) -> None:
 def test_main_rejects_bad_source_id(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["tail", "not-a-source"]) == 2
     assert "invalid source id" in capsys.readouterr().err
+
+
+async def test_cmd_tail_parses_and_prints_fields() -> None:
+    lines = [
+        "Nov 17 22:50:09 kali sshd[1301]: Failed password for invalid user admin from "
+        "203.0.113.9 port 51234 ssh2",
+        "Nov 17 22:50:10 kali sshd[1302]: error: boom",
+        "  continued",
+    ]
+    collector = FakeCollector([RawRecord("file:/var/log/auth.log", m) for m in lines], hang=False)
+    out = io.StringIO()
+    rc = await cmd_tail(
+        "file:/var/log/auth.log", {SourceKind.FILE: collector},
+        since=None, lines=3, follow=False, out=out, fields=True,
+    )  # fmt: skip
+    assert rc == 0
+    text = out.getvalue().splitlines()
+    assert text[0].endswith(
+        "WARNING  Failed password for invalid user admin from 203.0.113.9 port 51234 ssh2"
+    )
+    assert text[1] == (
+        "    {auth_method=password event=failed host=kali invalid_user=true parser=sshd "
+        "pid=1301 program=sshd src_ip=203.0.113.9 src_port=51234 user=admin}"
+    )
+    assert text[2].endswith("error: boom")
+    assert text[3] == "      continued"  # continuation lines indented by 4 more
+    assert "lines=2" in text[4]
+
+
+async def test_cmd_tail_flushes_pending_line_when_source_goes_idle() -> None:
+    collector = FakeCollector([RawRecord("docker:web", "hello")], hang=True)
+    out = io.StringIO()
+    task = asyncio.create_task(cmd_tail(
+        "docker:web", {SourceKind.DOCKER_CONTAINER: collector},
+        since=None, lines=1, follow=True, out=out,
+    ))  # fmt: skip
+    async with asyncio.timeout(5):
+        while "hello" not in out.getvalue():
+            await asyncio.sleep(0.02)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task

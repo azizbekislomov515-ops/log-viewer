@@ -19,8 +19,10 @@ from typing import Any, TextIO
 from loglens.collectors import Collector, default_collectors, source_from_id
 from loglens.collectors.discovery import Discoverer, default_discoverers
 from loglens.core.models import LogEntry, LogSource, SourceKind
-from loglens.core.pipeline import IngestPipeline, normalize
+from loglens.core.pipeline import IngestPipeline
 from loglens.core.registry import SourceRegistry
+from loglens.parsers import MultilineAssembler, Normalizer
+from loglens.parsers.multiline import assemble_stream
 from loglens.storage import Storage, StorageError, default_db_path
 
 _MAX_NAME_WIDTH = 40
@@ -42,6 +44,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     tail.add_argument("--since", type=_since_arg, help="10m, 2h, 1d, or an ISO date/time")
     tail.add_argument("-n", "--lines", type=int, default=10, help="backlog lines (default 10)")
     tail.add_argument("-f", "--follow", action="store_true", help="keep printing new lines")
+    tail.add_argument("--fields", action="store_true", help="also print parsed fields")
 
     collect = sub.add_parser("collect", help="collect sources into the database until Ctrl-C")
     collect.add_argument("source_ids", nargs="+", metavar="source_id")
@@ -67,6 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         since=args.since,
                         lines=args.lines,
                         follow=args.follow,
+                        fields=args.fields,
                         out=sys.stdout,
                     )
                 )
@@ -97,11 +101,12 @@ async def cmd_tail(
     lines: int,
     follow: bool,
     out: TextIO,
+    fields: bool = False,
 ) -> int:
-    """Stream a source straight from its collector (nothing is stored)."""
+    """Stream a source straight from its collector, parsed (nothing is stored)."""
     source = source_from_id(source_id)
     if since is not None and source.kind is SourceKind.FILE:
-        print("note: file lines have no parsed timestamps yet; --since is ignored, "
+        print("note: files can't be read from a point in time; --since is ignored, "
               f"showing the last {lines} lines", file=sys.stderr)  # fmt: skip
 
     def warn(_: str, exc: BaseException) -> None:
@@ -110,9 +115,10 @@ async def cmd_tail(
     stream = collectors[source.kind].stream(
         source, since=since, lines=lines, follow=follow, on_error=warn
     )
+    normalize = Normalizer()
     try:
-        async for record in stream:
-            out.write(format_entry(normalize(record)))
+        async for record in assemble_stream(stream, MultilineAssembler()):
+            out.write(format_entry(normalize(source, record), with_fields=fields))
             out.flush()
     except Exception as exc:  # non-follow mode raises instead of retrying
         print(f"loglens-cli: error: {exc}", file=sys.stderr)
@@ -159,13 +165,34 @@ def cmd_search(
     return 0
 
 
-def format_entry(entry: LogEntry, *, with_source: bool = False) -> str:
-    """One terminal line per entry; control characters neutralized."""
+def format_entry(entry: LogEntry, *, with_source: bool = False, with_fields: bool = False) -> str:
+    """One terminal line per entry (continuation lines of a multi-line event indented,
+    parsed fields on an extra line if asked); control characters neutralized."""
     stamp = entry.timestamp.astimezone().strftime("%Y-%m-%d %H:%M:%S")
     source = f" [{entry.source_id}]" if with_source else ""
     stream = " (stderr)" if entry.fields.get("stream") == "stderr" else ""
-    line = f"{stamp} {entry.severity.name:<8}{source}{stream} {entry.message}"
-    return _safe(line) + "\n"
+    head = f"{stamp} {entry.severity.name:<8}{source}{stream} "
+    lines = [_safe(line) for line in entry.message.split("\n")]
+    text = head + "\n    ".join(lines) + "\n"
+    if with_fields:
+        shown = " ".join(
+            f"{key}={_field_text(value)}"
+            for key, value in sorted(entry.fields.items())
+            if not _is_journal_field(key)
+        )
+        if shown:
+            text += _safe(f"    {{{shown}}}") + "\n"
+    return text
+
+
+def _is_journal_field(key: str) -> bool:
+    """journald's own fields (``_PID``, ``SYSLOG_IDENTIFIER``): always upper case."""
+    return key.startswith("_") or key.isupper()
+
+
+def _field_text(value: Any) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    return json.dumps(text) if not text or any(c in text for c in ' "=') else text
 
 
 _SINCE_RE = re.compile(r"^(\d+)\s*([smhdw])$")

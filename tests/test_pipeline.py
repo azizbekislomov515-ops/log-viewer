@@ -8,7 +8,8 @@ import pytest
 
 from loglens.collectors import source_from_id
 from loglens.core.models import LogEntry, RawRecord, Severity, SourceKind
-from loglens.core.pipeline import MAX_MESSAGE_CHARS, IngestPipeline, PipelineLimits, normalize
+from loglens.core.pipeline import IngestPipeline, PipelineLimits
+from loglens.parsers import MAX_MESSAGE_CHARS, MultilineAssembler, Normalizer
 from loglens.storage import Storage
 from tests.fakes import FakeCollector
 
@@ -32,10 +33,12 @@ def storage(tmp_path: Path):  # type: ignore[no-untyped-def]
 
 
 def test_normalize_defaults_and_caps() -> None:
+    normalize = Normalizer()
+    src = source_from_id("systemd:x.service")
     at = datetime(2026, 1, 1, tzinfo=UTC)
-    e = normalize(RawRecord("s", "hi", timestamp=at, severity=Severity.ERROR, fields={"k": 1}))
+    e = normalize(src, RawRecord("s", "hi", timestamp=at, severity=Severity.ERROR, fields={"k": 1}))
     assert (e.id, e.timestamp, e.severity, e.raw, e.parsed) == (0, at, Severity.ERROR, "hi", False)
-    d = normalize(RawRecord("s", "x" * (MAX_MESSAGE_CHARS + 5)))
+    d = normalize(src, RawRecord("s", "x" * (MAX_MESSAGE_CHARS + 5)))
     assert d.severity is Severity.INFO
     assert d.timestamp.tzinfo is UTC
     assert len(d.message) == MAX_MESSAGE_CHARS
@@ -148,3 +151,45 @@ async def test_backpressure_blocks_collector_instead_of_growing(storage: Storage
     assert produced <= FAST.queue_size + FAST.batch_size + 1
     gate.set()
     await p.stop()
+
+
+async def test_multiline_event_is_one_entry_and_pending_lines_are_not_covered(
+    storage: Storage,
+) -> None:
+    """A traceback split across batches is stored once; while its last line is still
+    pending in the assembler, the stored cursor never moves past what was stored."""
+    lines = [
+        "2026-11-17T22:50:01Z INFO start",
+        "2026-11-17T22:50:02Z ERROR job failed",
+        "Traceback (most recent call last):",
+        '  File "/app/job.py", line 3, in run',
+        "KeyError: 'k'",
+    ]
+    collector = FakeCollector([rec("docker:web", m, f"c{i}") for i, m in enumerate(lines)])
+    slow_idle = MultilineAssembler(idle=60)  # only shutdown may flush the pending event
+    async with IngestPipeline(
+        storage, {SourceKind.DOCKER_CONTAINER: collector}, limits=FAST, assembler=slow_idle
+    ) as p:
+        p.add_source(source_from_id("docker:web"))
+        await wait_until(lambda: p.stats.received == len(lines))
+        await asyncio.sleep(0.05)
+        assert storage.count() == 1  # "start"; the traceback is still pending
+        assert storage.cursor_for("docker:web") == "c0"
+    # stop() flushes the pending event
+    assert storage.cursor_for("docker:web") == "c4"
+    [_, trace] = p.recent("docker:web")
+    assert trace.fields["lines"] == 4
+    assert trace.fields["exception_type"] == "KeyError"
+    assert (trace.severity, trace.fields["parser"]) == (Severity.ERROR, "iso_text")
+    assert trace.timestamp == datetime(2026, 11, 17, 22, 50, 2, tzinfo=UTC)
+
+
+async def test_idle_source_flushes_its_last_line(storage: Storage) -> None:
+    collector = FakeCollector([rec("docker:web", "only line", "c0")])
+    async with IngestPipeline(
+        storage, {SourceKind.DOCKER_CONTAINER: collector}, limits=FAST,
+        assembler=MultilineAssembler(idle=0.05),
+    ) as p:  # fmt: skip
+        p.add_source(source_from_id("docker:web"))
+        await wait_until(lambda: storage.count() == 1)
+        assert storage.cursor_for("docker:web") == "c0"

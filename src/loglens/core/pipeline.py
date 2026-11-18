@@ -1,9 +1,11 @@
-"""IngestPipeline: collectors -> normalizer -> storage -> ring buffers -> subscribers.
+"""IngestPipeline: collectors -> multiline assembly -> normalizer/parsers -> storage -> GUI.
 
 Flow::
 
     collector task (one per source) --await put--> ingest queue (bounded)
-        --> writer task: batch (<= batch_size or flush_interval) --> normalize
+        --> writer task: batch (<= batch_size or flush_interval)
+        --> MultilineAssembler (holds the last event per source until it is complete)
+        --> Normalizer (parser registry: timestamps, severity, fields)
         --> Storage.write_batch (worker thread; entries + cursors in one transaction)
         --> per-source ring buffer --> subscriber callbacks (event-loop thread)
 
@@ -23,6 +25,7 @@ writer batch in flight     ``batch_size`` = 500 records           ~0.3 MiB     3
 ring buffer, per source    ``ring_size`` = 2000 entries           ~1.5 MiB     128 MiB
 docker reader handoff      8 batches (1 Docker frame each)        ~64 KiB      8 MiB
 per-collector line buffer  ``MAX_LINE_BYTES`` = 64 KiB            ~0           64 KiB
+multiline event, per src   ``MAX_EVENT_CHARS`` = 64 KiB           ~0.3 KiB     64 KiB
 journalctl line buffer     ``MAX_JSON_LINE`` = 1 MiB              ~1 KiB       1 MiB
 =========================  =====================================  ===========  =========
 
@@ -43,16 +46,14 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from loglens.core.models import LogEntry, LogSource, RawRecord, Severity, SourceKind, utc_now
+from loglens.core.models import LogEntry, LogSource, RawRecord, SourceKind
+from loglens.parsers import MultilineAssembler, Normalizer
 from loglens.storage import RetentionPolicy, Storage
 
 if TYPE_CHECKING:
     from loglens.collectors.base import Collector
 
 log = logging.getLogger(__name__)
-
-#: Longest message kept; anything longer is cut and flagged ``truncated``.
-MAX_MESSAGE_CHARS = 64 * 1024
 
 Subscriber = Callable[[Sequence[LogEntry]], None]
 
@@ -79,23 +80,6 @@ class PipelineStats:
     collector_errors: dict[str, str] = field(default_factory=dict)
 
 
-def normalize(record: RawRecord) -> LogEntry:
-    """Normalizer stub (Phase 3 replaces it with real parsing): fill defaults, cap size."""
-    message, fields = record.message, record.fields
-    if len(message) > MAX_MESSAGE_CHARS:
-        message, fields = message[:MAX_MESSAGE_CHARS], {**fields, "truncated": True}
-    return LogEntry(
-        id=0,
-        source_id=record.source_id,
-        timestamp=record.timestamp or utc_now(),
-        severity=record.severity if record.severity is not None else Severity.INFO,
-        message=message,
-        raw=message,
-        fields=fields,
-        parsed=False,
-    )
-
-
 class IngestPipeline:
     """Owns collector tasks, the writer task and the in-memory ring buffers.
 
@@ -110,14 +94,17 @@ class IngestPipeline:
         limits: PipelineLimits = PipelineLimits(),
         retention: RetentionPolicy | None = RetentionPolicy(),  # noqa: B008
         retention_interval: float = 60.0,
-        normalizer: Callable[[RawRecord], LogEntry] = normalize,
+        normalizer: Callable[[LogSource, RawRecord], LogEntry] | None = None,
+        assembler: MultilineAssembler | None = None,
     ) -> None:
         self._storage = storage
         self._collectors = dict(collectors)
         self._limits = limits
         self._retention = retention
         self._retention_interval = retention_interval
-        self._normalize = normalizer
+        self._normalize = normalizer or Normalizer()
+        self._assembler = assembler or MultilineAssembler()
+        self._sources: dict[str, LogSource] = {}
         self._queue: asyncio.Queue[RawRecord | None] = asyncio.Queue(limits.queue_size)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._rings: defaultdict[str, deque[LogEntry]] = defaultdict(
@@ -164,6 +151,7 @@ class IngestPipeline:
         otherwise starts at ``since`` / the last ``lines`` lines / now."""
         if source.id in self._tasks:
             return
+        self._sources[source.id] = source
         self._tasks[source.id] = asyncio.create_task(
             self._collect(source, since, lines), name=f"collect:{source.id}"
         )
@@ -216,7 +204,14 @@ class IngestPipeline:
         limits = self._limits
         done = False
         while not done:
-            first = await self._queue.get()
+            if self._assembler.pending:  # wake up to emit events whose source went quiet
+                try:
+                    first = await asyncio.wait_for(self._queue.get(), self._assembler.idle)
+                except TimeoutError:
+                    await self._flush([])
+                    continue
+            else:
+                first = await self._queue.get()
             if first is None:
                 break
             batch = [first]
@@ -238,12 +233,19 @@ class IngestPipeline:
                     break
                 batch.append(item)
             await self._flush(batch)
+        await self._flush([], final=True)
 
-    async def _flush(self, records: list[RawRecord]) -> None:
+    async def _flush(self, records: list[RawRecord], *, final: bool = False) -> None:
         self.stats.received += len(records)
-        entries = [self._normalize(r) for r in records]
-        # dict keeps the last cursor per source: the resume point after this batch.
-        cursors = {r.source_id: r.cursor for r in records if r.cursor is not None}
+        now = asyncio.get_running_loop().time()
+        events = [event for r in records for event in self._assembler.feed(r, now)]
+        events += self._assembler.flush() if final else self._assembler.flush_idle(now)
+        if not events:
+            return
+        entries = [self._normalize(self._sources[r.source_id], r) for r in events]
+        # Only emitted events carry cursors, so a line still pending in the assembler is
+        # never covered by a stored cursor. dict keeps the last cursor per source.
+        cursors = {r.source_id: r.cursor for r in events if r.cursor is not None}
         try:
             stored = await asyncio.to_thread(self._storage.write_batch, entries, cursors)
             self.stats.stored += len(stored)
