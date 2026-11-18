@@ -105,6 +105,7 @@ _LEVEL_NAMES: dict[str, Severity] = {
     "verbose": Severity.TRACE,
     "debug": Severity.DEBUG,
     "dbg": Severity.DEBUG,
+    "dbug": Severity.DEBUG,  # Grafana/log15
     "info": Severity.INFO,
     "information": Severity.INFO,
     "informational": Severity.INFO,
@@ -112,6 +113,7 @@ _LEVEL_NAMES: dict[str, Severity] = {
     "warn": Severity.WARNING,
     "warning": Severity.WARNING,
     "err": Severity.ERROR,
+    "eror": Severity.ERROR,  # Grafana/log15
     "error": Severity.ERROR,
     "fail": Severity.ERROR,
     "failure": Severity.ERROR,
