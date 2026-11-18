@@ -23,6 +23,7 @@ dev = [
     "types-PyYAML",
     "types-docker",
     "pre-commit>=4.0",
+    "hypothesis>=6.170.15",
 ]
 
 [build-system]
