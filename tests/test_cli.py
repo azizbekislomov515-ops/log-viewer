@@ -218,3 +218,29 @@ def test_format_entry_neutralizes_escapes_in_every_part() -> None:
     text = format_entry(entry, with_source=True, with_fields=True)
     assert "\x1b" not in text and "\x07" not in text
     assert text.count("\n") == 3  # head line, one continuation, fields line
+
+
+async def test_collect_and_tail_redact_secrets(tmp_path: Path) -> None:
+    import signal  # noqa: PLC0415
+
+    from loglens.cli import cmd_collect, cmd_tail  # noqa: PLC0415
+    from loglens.collectors.files import FileCollector  # noqa: PLC0415
+
+    log = tmp_path / "app.log"
+    log.write_text("login password=Hunter2Secret ok\n")
+    out = io.StringIO()
+    rc = await cmd_tail(f"file:{log}", {SourceKind.FILE: FileCollector(use_inotify=False)},
+                        since=None, lines=10, follow=False, out=out)  # fmt: skip
+    assert rc == 0 and "Hunter2Secret" not in out.getvalue()
+    assert "[REDACTED:password]" in out.getvalue()
+
+    db = tmp_path / "db.sqlite"
+    task = asyncio.create_task(cmd_collect([f"file:{log}"], db, out=io.StringIO()))
+    await asyncio.sleep(0.5)
+    with log.open("a") as handle:  # collect follows new lines only
+        handle.write("again token=Hunter2Secret\n")
+    await asyncio.sleep(2.0)
+    signal.raise_signal(signal.SIGTERM)  # the command stops cleanly on SIGTERM
+    assert await asyncio.wait_for(task, 10) == 0
+    stored = b"".join(p.read_bytes() for p in tmp_path.glob("db.sqlite*"))
+    assert b"Hunter2Secret" not in stored and b"REDACTED" in stored

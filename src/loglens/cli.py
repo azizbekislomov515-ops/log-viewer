@@ -19,6 +19,7 @@ from typing import Any, TextIO
 
 from loglens.collectors import Collector, default_collectors, source_from_id
 from loglens.collectors.discovery import Discoverer, default_discoverers
+from loglens.config import Settings, load_settings
 from loglens.core.models import Explanation, LogEntry, LogSource, RawRecord, SourceKind
 from loglens.core.pipeline import IngestPipeline
 from loglens.core.registry import SourceRegistry
@@ -27,6 +28,7 @@ from loglens.explain.examples import run_examples
 from loglens.explain.insights import analyze
 from loglens.parsers import MultilineAssembler, Normalizer
 from loglens.parsers.multiline import assemble_stream
+from loglens.security.redact import Redactor
 from loglens.security.text import printable
 from loglens.storage import Storage, StorageError, default_db_path
 
@@ -92,11 +94,17 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 (command di
                         follow=args.follow,
                         fields=args.fields,
                         out=sys.stdout,
+                        redactor=load_settings().redactor(),
                     )
                 )
             case "collect":
                 return asyncio.run(
-                    cmd_collect(args.source_ids, args.db or default_db_path(), out=sys.stdout)
+                    cmd_collect(
+                        args.source_ids,
+                        args.db or default_db_path(),
+                        out=sys.stdout,
+                        settings=load_settings(),
+                    )
                 )
             case "explain":
                 return cmd_explain(args.file, args.source, args.rules, out=sys.stdout)
@@ -128,8 +136,11 @@ async def cmd_tail(
     follow: bool,
     out: TextIO,
     fields: bool = False,
+    redactor: Redactor | None = None,
 ) -> int:
-    """Stream a source straight from its collector, parsed (nothing is stored)."""
+    """Stream a source straight from its collector, parsed (nothing is stored); secrets
+    are redacted as they would be in the app."""
+    redactor = redactor or Redactor()
     source = source_from_id(source_id)
     if since is not None and source.kind is SourceKind.FILE:
         print("note: files can't be read from a point in time; --since is ignored, "
@@ -144,7 +155,8 @@ async def cmd_tail(
     normalize = Normalizer()
     try:
         async for record in assemble_stream(stream, MultilineAssembler()):
-            out.write(format_entry(normalize(source, record), with_fields=fields))
+            entry = redactor.redact_entry(normalize(source, record))
+            out.write(format_entry(entry, with_fields=fields))
             out.flush()
     except Exception as exc:  # non-follow mode raises instead of retrying
         print(f"loglens-cli: error: {exc}", file=sys.stderr)
@@ -152,11 +164,21 @@ async def cmd_tail(
     return 0
 
 
-async def cmd_collect(source_ids: Sequence[str], db_path: Path, *, out: TextIO) -> int:
-    """Collect sources into the database, printing entries as they are stored."""
+async def cmd_collect(
+    source_ids: Sequence[str], db_path: Path, *, out: TextIO, settings: Settings | None = None
+) -> int:
+    """Collect sources into the database, printing entries as they are stored. Uses the
+    app's settings: secrets redacted before storage, retention and disk budget applied."""
+    settings = settings or Settings()
     sources = [source_from_id(s) for s in source_ids]
     with Storage(db_path) as storage:
-        async with IngestPipeline(storage, default_collectors()) as pipeline:
+        async with IngestPipeline(
+            storage,
+            default_collectors(),
+            retention=settings.retention,
+            redactor=settings.redactor(),
+            max_sources=settings.max_collectors or 10_000,
+        ) as pipeline:
 
             def show(entries: Sequence[LogEntry]) -> None:
                 out.writelines(format_entry(e, with_source=True) for e in entries)
