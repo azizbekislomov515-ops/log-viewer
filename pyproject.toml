@@ -9,6 +9,8 @@ dependencies = [
     "docker>=7.1",
     "PyYAML>=6.0",
     "inotify-simple>=1.3",
+    "jinja2>=3.1",
+    "jsonschema>=4.23",
 ]
 
 [project.scripts]
@@ -24,6 +26,8 @@ dev = [
     "types-docker",
     "pre-commit>=4.0",
     "hypothesis>=6.170.15",
+    "pytest-cov>=7.1.0",
+    "types-jsonschema>=4.26.0.20261006",
 ]
 
 [build-system]
