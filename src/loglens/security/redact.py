@@ -45,12 +45,10 @@ class _Pattern:
     kind: str
     regex: re.Pattern[str]
     check: Callable[[str], bool] | None = None
-    #: Cheap test on the lower-cased text: the regex runs only if this says it could match.
-    hint: Callable[[str, str], bool] = lambda low, text: True
-
-
-def _any(*words: str) -> Callable[[str, str], bool]:
-    return lambda low, _text: any(w in low for w in words)
+    #: The regex runs only if one of these words occurs (lower-cased) in the text...
+    words: tuple[str, ...] = ()
+    #: ...or, for patterns without keywords, if this cheap regex finds something.
+    probe: re.Pattern[str] | None = None
 
 
 _DIGITS13 = re.compile(r"\d(?:[ -]?\d){12}")
@@ -90,51 +88,61 @@ _KEY_WORDS = (
     r"pass(?:word|wd|phrase)?|pwd|secret|client[_-]?secret|token|access[_-]?token|"
     r"refresh[_-]?token|auth[_-]?token|api[_-]?key|apikey|private[_-]?key"
 )
+#: Before a captured value: it may not itself be a key ("password= passwd: x" takes x),
+#: or a crafted line could make a pattern swallow the next key and leave the secret.
+_NOT_A_KEY = (
+    rf"(?!(?:{_KEY_WORDS}|(?:proxy-)?authorization|cookie|session(?:[_-]?id)?|sid)"
+    r"[\"']?\s*[:=])"
+)
 #: Order matters: earlier patterns run first, and replaced text cannot match later ones.
 _PATTERNS = (
     _Pattern("private_key", re.compile(
         r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?"
-        r"(?:-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----|\Z)"), hint=_any("private key")),
+        r"(?:-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----|\Z)"), words=("private key",)),
     _Pattern("url_password", re.compile(
         r"(?<=[a-zA-Z0-9+.-]://)(?:[^\s/:@]{1,256}):(?P<s>[^\s/@]{1,256})(?=@)"),
-        hint=lambda low, _t: "://" in low and "@" in low),
+        words=("://",)),
     _Pattern("authorization", re.compile(
         r"(?i)(?<![\w-])(?:proxy-)?authorization\s*[:=]\s*(?:basic|bearer|digest|token|negotiate)?"
-        r"\s*(?P<s>[^\s,;\"']{4,})"), hint=_any("authoriz")),
+        rf"\s*{_NOT_A_KEY}(?P<s>[^\s,;\"']{{4,}})"), words=("authoriz",)),
     _Pattern("bearer", re.compile(r"(?i)\bbearer\s+(?P<s>[A-Za-z0-9._~+/=-]{8,})"),
-             hint=_any("bearer")),
+             words=("bearer",)),
     _Pattern("aws_access_key", re.compile(
         r"\b(?P<s>(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{16})\b"),
-        hint=_any("akia", "asia", "agpa", "aida", "aroa", "anpa", "anva", "aipa")),
+        words=("akia", "asia", "agpa", "aida", "aroa", "anpa", "anva", "aipa")),
     _Pattern("aws_secret_key", re.compile(
         r"(?i)aws_?secret_?(?:access_?)?key[\"']?\s*[:=]\s*[\"']?(?P<s>[A-Za-z0-9/+]{40})"),
-        hint=_any("aws")),
+        words=("aws",)),
     _Pattern("github_token", re.compile(
         r"\b(?P<s>gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b"),
-        hint=_any("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_")),
+        words=("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_")),
     _Pattern("stripe_key", re.compile(r"\b(?P<s>(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,247})\b"),
-             hint=_any("k_live_", "k_test_")),
+             words=("k_live_", "k_test_")),
     _Pattern("slack_token", re.compile(r"\b(?P<s>xox[abposr]-[A-Za-z0-9-]{10,250})"),
-             hint=_any("xox")),
+             words=("xox",)),
     _Pattern("jwt", re.compile(
         r"\b(?P<s>eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})"),
-        hint=_any("eyj")),
+        words=("eyj",)),
     _Pattern("cookie", re.compile(r"(?i)(?<![\w-])(?:set-)?cookie\s*:\s*(?P<s>[^\r\n]{1,4096})"),
-             hint=_any("cookie")),
+             words=("cookie",)),
     _Pattern("session_id", re.compile(
         r"(?i)\b(?:session(?:[_-]?id)?|sid|phpsessid|jsessionid|connect\.sid|csrftoken|"
-        r"xsrf-token)\s*[=:]\s*(?P<s>[^\s;&,\"']{8,256})"),
-        hint=_any("sess", "sid", "csrf", "xsrf")),
+        rf"xsrf-token)\s*[=:]\s*{_NOT_A_KEY}(?P<s>[^\s;&,\"']{{8,256}})"),
+        words=("sess", "sid", "csrf", "xsrf")),
     _Pattern("password", re.compile(
-        rf"(?i)(?<![\w-])(?:{_KEY_WORDS})[\"']?\s*[:=]\s*[\"']?(?P<s>[^\s\"'&,;]{{3,256}})"),
-        hint=_any("pass", "pwd", "secret", "token", "key")),
+        rf"(?i)(?<![\w-])(?:{_KEY_WORDS})[\"']?\s*[:=]\s*[\"']?"
+        rf"{_NOT_A_KEY}(?P<s>[^\s\"'&,;]{{3,256}})"),
+        words=("pass", "pwd", "secret", "token", "key")),
     _Pattern("credit_card", re.compile(r"(?<![\d-])(?P<s>\d(?:[ -]?\d){12,18})(?![\d-])"),
-             luhn_ok, hint=lambda _l, text: _DIGITS13.search(text) is not None),
+             luhn_ok, probe=_DIGITS13),
     # Not after "SHA256:" / "MD5:": key fingerprints are public and identify the key.
     _Pattern("high_entropy", re.compile(
         r"(?<![\w+/=:-])(?<!SHA256:)(?<!SHA1:)(?<!MD5:)(?P<s>[A-Za-z0-9+/_=-]{32,512})(?![\w+/=-])"),
-        looks_random, hint=lambda _l, text: _RUN32.search(text) is not None),
+        looks_random, probe=_RUN32),
 )  # fmt: skip
+_HINT_WORDS = re.compile(
+    "|".join(sorted({re.escape(w) for p in _PATTERNS for w in p.words}, key=len, reverse=True))
+)
 
 
 class SecretVault:
@@ -214,9 +222,9 @@ class Redactor:
             return text, 0
         text = text[:MAX_TEXT]
         count = 0
-        low = text.lower()
+        found = set(_HINT_WORDS.findall(text.lower()))  # one pass for all keywords
         for pattern in _PATTERNS:
-            if pattern.hint(low, text):
+            if pattern.probe.search(text) if pattern.probe else found.intersection(pattern.words):
                 text, n = self._apply(pattern.kind, pattern.regex, pattern.check, text)
                 count += n
         for custom in self.custom:

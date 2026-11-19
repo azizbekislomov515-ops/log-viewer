@@ -195,10 +195,19 @@ class _Tail:
 def _open(path: Path, *, strict: bool = False) -> BinaryIO:
     if not strict:
         return path.open("rb", buffering=0)
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
+    # O_NONBLOCK: opening a FIFO or device must not block; regular files ignore it.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(f"{path} is not a regular file")
+        # O_NOFOLLOW guards only the last component: the kernel's view of what was
+        # opened must be exactly the requested path (no symlinked directory on the way).
+        if Path(f"/proc/self/fd/{fd}").readlink() != Path(path):
+            raise OSError(f"{path} resolves elsewhere (symlink in the path)")
+        os.set_blocking(fd, True)
+    except BaseException:
         os.close(fd)
-        raise OSError(f"{path} is not a regular file")
+        raise
     return os.fdopen(fd, "rb", buffering=0)
 
 

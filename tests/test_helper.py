@@ -240,3 +240,18 @@ def test_any_record_fits_one_message() -> None:
         line = protocol.encode_record(record)
         assert len(line) <= protocol.MAX_MESSAGE
         assert protocol.decode_reply(line)["type"] == "record"
+
+
+async def test_strict_open_rejects_symlinked_directories_and_fifos(tmp_path: Path) -> None:
+    from loglens.collectors.files import FileCollector  # noqa: PLC0415
+
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "app.log").write_text("x\n")
+    (tmp_path / "alias").symlink_to(real)
+    fifo = tmp_path / "pipe.log"
+    os.mkfifo(fifo)
+    strict = FileCollector(strict=True, use_inotify=False)
+    for path in (tmp_path / "alias" / "app.log", fifo):
+        with pytest.raises(OSError):  # promptly: the FIFO open does not block
+            [r async for r in strict.stream(source_from_id(f"file:{path}"), follow=False)]
