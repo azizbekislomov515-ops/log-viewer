@@ -240,8 +240,8 @@ class Explanation:
     ``plain_text`` is 1-2 sentences for a non-expert admin and quotes the concrete
     IP/domain/container from the line. ``confidence`` (0..1) is how sure the rule is about
     its *cause*; what the line says is matched deterministically. ``tags`` are rule labels
-    aggregate views use (e.g. ``restart``). Text is plain: escape it before showing it as
-    rich text.
+    aggregate views use (e.g. ``restart``, ``detection``). Text is plain: escape it before
+    showing it as rich text.
     """
 
     title: str
@@ -254,3 +254,9 @@ class Explanation:
     suggested_action: str | None = None
     references: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
+    #: Values the rule pulled out of the line (regex groups and fields), for display and
+    #: aggregation. Raw log text: treat as untrusted.
+    extracted: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "extracted", _freeze(self.extracted))

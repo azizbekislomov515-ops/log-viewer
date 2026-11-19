@@ -8,7 +8,7 @@ cached, so a line only walks rules that can apply to it.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from loglens.collectors import source_from_id
@@ -33,7 +33,10 @@ class ExplanationEngine:
 
     @classmethod
     def from_directory(
-        cls, directory: Path | None = None, *, packs: Iterable[str] | None = None
+        cls,
+        directory: Path | Sequence[Path] | None = None,
+        *,
+        packs: Iterable[str] | None = None,
     ) -> ExplanationEngine:
         """Load packs from ``directory`` (default: ``rules/``). Problems are logged and kept
         in ``issues``; the engine works with whatever loaded."""

@@ -110,6 +110,59 @@ RULE: dict[str, Any] = {
     },
 }
 
+_CARD: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["title", "kind"],
+    "description": "top: most frequent values of `field`; count: how many entries; "
+    "recent: the latest entries with `columns`. `when` picks the entries.",
+    "properties": {
+        "title": _TEXT,
+        "kind": {"enum": ["top", "count", "recent"]},
+        "field": _TEXT,
+        "columns": _TEXT_LIST,
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        "warn_at": {"type": "integer", "minimum": 1},
+        "empty": _TEXT,
+        "when": {
+            "type": "object",
+            "additionalProperties": False,
+            "minProperties": 1,
+            "properties": {
+                "rules": _TEXT_LIST,
+                "tags": _TEXT_LIST,
+                "min_severity": {"enum": _SEVERITIES},
+            },
+        },
+    },
+    "if": {"properties": {"kind": {"const": "top"}}},
+    "then": {"required": ["field"]},
+}
+
+OVERVIEW: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "applies_to": SELECTOR,
+        "key_fields": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": _TEXT,
+            "description": "field -> label named in the 'What is happening' paragraph",
+        },
+        "thresholds": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "error_rate": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                "spike_z": {"type": "number", "exclusiveMinimum": 0},
+                "spike_min_errors": {"type": "integer", "minimum": 1},
+            },
+        },
+        "cards": {"type": "array", "minItems": 1, "items": _CARD},
+    },
+}
+
 PACK: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -120,6 +173,7 @@ PACK: dict[str, Any] = {
         "description": _TEXT,
         "applies_to": SELECTOR,
         "example_source": _TEXT,
+        "overview": {"type": "object"},
         "rules": {"type": "array"},
     },
 }

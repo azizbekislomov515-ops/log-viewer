@@ -321,6 +321,28 @@ class Storage:
                     self._conn.set_progress_handler(None, 0)
         return ids, severities
 
+    def severity_histogram(
+        self,
+        source_ids: Sequence[str],
+        since: datetime,
+        bucket: timedelta,
+        until: datetime | None = None,
+    ) -> list[tuple[datetime, Severity, int]]:
+        """Entry counts per ``bucket``-long interval and severity since ``since``: exact
+        numbers for timelines however many entries there are."""
+        size = max(bucket // _US, 1)
+        start = (since - _EPOCH) // _US
+        end = (until - _EPOCH) // _US if until is not None else 2**62
+        with self._lock:
+            keys = self._source_keys(source_ids)
+            rows = self._conn.execute(
+                f"SELECT ts / ? AS b, severity, COUNT(*) FROM entries "  # noqa: S608
+                f"WHERE source IN ({_marks(keys)}) AND ts >= ? AND ts <= ? "
+                "GROUP BY b, severity ORDER BY b",
+                (size, *keys, start, end),
+            ).fetchall()
+        return [(_EPOCH + b * size * _US, Severity(sev), n) for b, sev, n in rows]
+
     def entries_by_id(self, ids: Sequence[int]) -> list[LogEntry]:
         """Entries for ``ids`` in the given order; ids that no longer exist are skipped."""
         if not ids:
@@ -335,13 +357,7 @@ class Storage:
         """SQL for ``entry_ids`` (call with the lock held). Source keys are resolved first:
         with one source, ``source = ?`` lets the covering index return rows in id order
         (no sort); several sources need a sort, which SQLite does in its temp B-tree."""
-        keys = [
-            key
-            for (key,) in self._conn.execute(
-                f"SELECT key FROM sources WHERE id IN ({_marks(query.source_ids)})",  # noqa: S608
-                list(query.source_ids),
-            )
-        ]
+        keys = self._source_keys(query.source_ids)
         where = ["source = ?" if len(keys) == 1 else f"source IN ({_marks(keys)})"]
         params: list[Any] = list(keys)
         if query.severities is not None:
@@ -361,6 +377,16 @@ class Storage:
         # Only "?" placeholders and fixed SQL fragments are interpolated; values are params.
         sql = f"SELECT id, severity FROM entries WHERE {' AND '.join(where)} ORDER BY id"  # noqa: S608
         return sql, params
+
+    def _source_keys(self, source_ids: Sequence[str]) -> list[int]:
+        """Integer keys of known source ids (call with the lock held)."""
+        return [
+            key
+            for (key,) in self._conn.execute(
+                f"SELECT key FROM sources WHERE id IN ({_marks(source_ids)})",  # noqa: S608
+                list(source_ids),
+            )
+        ]
 
     def count(self, source_id: str | None = None) -> int:
         """Number of stored entries (for one source or all)."""

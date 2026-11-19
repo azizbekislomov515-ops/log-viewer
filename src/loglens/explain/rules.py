@@ -27,6 +27,7 @@ import shlex
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import jsonschema
@@ -154,6 +155,7 @@ class Rule:
         text = _render(self.text, context)
         if not text:
             return None
+        extracted = {k: v for k, v in context.items() if k not in BUILTINS and v is not None}
         return Explanation(
             title=_render(self.title, context),
             plain_text=text,
@@ -165,6 +167,7 @@ class Rule:
             suggested_action=_render(self.action, context) or None,
             references=self.references,
             tags=self.tags,
+            extracted=extracted,
         )
 
     def _target(self, entry: LogEntry) -> str | None:
@@ -178,6 +181,43 @@ class Rule:
 
 
 @dataclass(frozen=True, slots=True)
+class CardSpec:
+    """One overview card a pack declares (see ``schema._CARD``)."""
+
+    title: str
+    kind: str
+    field: str | None = None
+    columns: tuple[str, ...] = ()
+    limit: int = 5
+    warn_at: int | None = None
+    empty: str = "Nothing in this period."
+    rules: frozenset[str] = frozenset()
+    tags: frozenset[str] = frozenset()
+    min_severity: Severity | None = None
+
+    def selects(self, rule_id: str | None, tags: Iterable[str], severity: Severity) -> bool:
+        """Whether an entry (with its explanation's rule id and tags) feeds this card."""
+        if self.min_severity is not None and severity < self.min_severity:
+            return False
+        if not (self.rules or self.tags):
+            return True
+        return rule_id in self.rules or not self.tags.isdisjoint(tags)
+
+
+@dataclass(frozen=True, slots=True)
+class Overview:
+    """A pack's Service Overview metadata: cards, the fields its summary names, thresholds."""
+
+    cards: tuple[CardSpec, ...] = ()
+    #: Which sources show these cards (None: the pack's own ``applies_to``).
+    selector: Selector | None = None
+    key_fields: Mapping[str, str] = MappingProxyType({})
+    error_rate: float | None = None
+    spike_z: float | None = None
+    spike_min_errors: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Pack:
     """A loaded rule pack (only its valid rules)."""
 
@@ -186,6 +226,8 @@ class Pack:
     example_source: str
     description: str = ""
     rules: tuple[Rule, ...] = ()
+    selector: Selector = Selector()
+    overview: Overview | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,28 +243,44 @@ class RuleSet:
         return tuple(r for p in self.packs for r in p.rules)
 
 
-def load_rules(directory: Path | None = None, *, packs: Iterable[str] | None = None) -> RuleSet:
-    """Load every ``*.yaml`` pack in ``directory`` (default: the repo's ``rules/``).
+def load_rules(
+    directory: Path | Sequence[Path] | None = None, *, packs: Iterable[str] | None = None
+) -> RuleSet:
+    """Load every ``*.yaml`` pack in ``directory`` (default: the repo's ``rules/``), or in
+    several directories in order (built-in packs first, then user packs).
 
     ``packs`` limits loading to those pack names. Duplicate rule ids across packs: the
     first one wins, later ones are reported and skipped.
     """
-    directory = directory or DEFAULT_RULES_DIR
+    if directory is None:
+        directories: Sequence[Path] = (DEFAULT_RULES_DIR,)
+    elif isinstance(directory, Path):
+        directories = (directory,)
+    else:
+        directories = directory
     wanted = None if packs is None else set(packs)
-    env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
-    env.filters["shquote"] = _shquote
+    env = make_environment()
     loaded: list[Pack] = []
     issues: list[LoadIssue] = []
     seen: set[str] = set()
-    if not directory.is_dir():
-        issues.append(LoadIssue(directory, 0, "rules directory not found"))
-    for path in sorted(directory.glob("*.yaml")) if directory.is_dir() else ():
-        if path.name in NOT_PACKS:
+    for folder in directories:
+        if not folder.is_dir():
+            issues.append(LoadIssue(folder, 0, "rules directory not found"))
             continue
-        pack = _load_pack(path, env, issues, seen, wanted)
-        if pack is not None:
-            loaded.append(pack)
+        for path in sorted(folder.glob("*.yaml")):
+            if path.name in NOT_PACKS:
+                continue
+            pack = _load_pack(path, env, issues, seen, wanted)
+            if pack is not None:
+                loaded.append(pack)
     return RuleSet(tuple(loaded), tuple(issues))
+
+
+def make_environment() -> SandboxedEnvironment:
+    """The Jinja2 sandbox rule templates run in (shared by the loader and the editor)."""
+    env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
+    env.filters["shquote"] = _shquote
+    return env
 
 
 class _RuleError(Exception):
@@ -293,7 +351,66 @@ def _load_pack(
             continue
         seen.add(rule_id)
         rules.append(rule)
-    return Pack(name, path, data["example_source"], data.get("description", ""), tuple(rules))
+    overview = _overview(data.get("overview"), {r.id for r in rules}, root, path, issues)
+    return Pack(
+        name,
+        path,
+        data["example_source"],
+        data.get("description", ""),
+        tuple(rules),
+        pack_selector,
+        overview,
+    )
+
+
+def _overview(
+    raw: Any, rule_ids: set[str], root: yaml.Node, path: Path, issues: list[LoadIssue]
+) -> Overview | None:
+    """Parse a pack's ``overview`` block; a bad block is reported and dropped (the pack's
+    rules still load)."""
+    if raw is None:
+        return None
+    error = jsonschema.exceptions.best_match(
+        jsonschema.Draft202012Validator(schema.OVERVIEW).iter_errors(raw)
+    )
+    if error is not None:
+        where = ["overview", *error.absolute_path]
+        issues.append(LoadIssue(path, _line(root, where), f"overview: {_schema_message(error)}"))
+        return None
+    cards = []
+    for index, card in enumerate(raw.get("cards", ())):
+        when = card.get("when", {})
+        unknown = set(when.get("rules", ())) - rule_ids
+        if unknown:
+            where = ["overview", "cards", index, "when", "rules"]
+            issues.append(
+                LoadIssue(path, _line(root, where), f"card uses unknown rules: {sorted(unknown)}")
+            )
+            continue
+        severity = when.get("min_severity")
+        cards.append(
+            CardSpec(
+                title=card["title"],
+                kind=card["kind"],
+                field=card.get("field"),
+                columns=tuple(card.get("columns", ())),
+                limit=card.get("limit", 5),
+                warn_at=card.get("warn_at"),
+                empty=card.get("empty", "Nothing in this period."),
+                rules=frozenset(when.get("rules", ())),
+                tags=frozenset(when.get("tags", ())),
+                min_severity=None if severity is None else Severity[severity.upper()],
+            )
+        )
+    thresholds = raw.get("thresholds", {})
+    return Overview(
+        cards=tuple(cards),
+        selector=_selector(raw["applies_to"]) if "applies_to" in raw else None,
+        key_fields=MappingProxyType(dict(raw.get("key_fields", {}))),
+        error_rate=thresholds.get("error_rate"),
+        spike_z=thresholds.get("spike_z"),
+        spike_min_errors=thresholds.get("spike_min_errors"),
+    )
 
 
 def _compile(

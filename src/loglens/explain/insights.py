@@ -103,7 +103,7 @@ def analyze(
             return {}
         now = max(stamps)
     return {
-        source_id: _one(
+        source_id: summarize(
             source_id,
             group,
             now=now,
@@ -117,25 +117,42 @@ def analyze(
     }
 
 
-def _one(
-    source_id: str,
+@dataclass(frozen=True, slots=True)
+class Thresholds:
+    """What counts as a spike (rule packs can override these per service)."""
+
+    spike_z: float = SPIKE_Z
+    spike_min_errors: int = SPIKE_MIN_ERRORS
+
+
+def summarize(
+    label: str,
     entries: Sequence[LogEntry],
     *,
     now: datetime,
-    window: timedelta,
-    baseline: timedelta,
-    explain: Explain | None,
-    top_n: int,
-    repeat_threshold: int,
+    window: timedelta = timedelta(minutes=5),
+    baseline: timedelta = timedelta(hours=1),
+    explain: Explain | None = None,
+    top_n: int = 5,
+    repeat_threshold: int = 10,
+    key_fields: Mapping[str, str] | None = None,
+    thresholds: Thresholds = Thresholds(),
 ) -> SourceInsight:
+    """Insight for one flat list of entries (one source, or a whole Compose project).
+
+    ``key_fields`` (field -> label) are the fields the summary names the top values of;
+    rule packs provide them, ``KEY_FIELDS`` is the default.
+    """
+    fields = KEY_FIELDS if key_fields is None else key_fields
+    source_id = label
     start = now - window
     recent = [e for e in entries if start < e.timestamp <= now]
     errors = sum(e.severity >= Severity.ERROR for e in recent)
     minutes = window / _MINUTE
-    top = _top(recent, top_n)
+    top = _top(recent, top_n, fields)
     restarts = _restarts(recent, explain)
     repeated = _repeats(recent, repeat_threshold)
-    spike = _spike(entries, now, baseline)
+    spike = _spike(entries, now, baseline, thresholds)
     insight = SourceInsight(
         source_id=source_id,
         start=start,
@@ -151,11 +168,13 @@ def _one(
         repeated=repeated,
         summary="",
     )
-    return _with_summary(insight, minutes)
+    return _with_summary(insight, minutes, fields)
 
 
-def _top(entries: Sequence[LogEntry], n: int) -> dict[str, tuple[tuple[str, int], ...]]:
-    counters: dict[str, Counter[str]] = {key: Counter() for key in KEY_FIELDS}
+def _top(
+    entries: Sequence[LogEntry], n: int, fields: Mapping[str, str]
+) -> dict[str, tuple[tuple[str, int], ...]]:
+    counters: dict[str, Counter[str]] = {key: Counter() for key in fields}
     for entry in entries:
         for key, counter in counters.items():
             value = entry.fields.get(key)
@@ -187,7 +206,9 @@ def _repeats(entries: Sequence[LogEntry], threshold: int) -> tuple[Repeat, ...]:
     return tuple(sorted(repeats, key=lambda r: -r.count))
 
 
-def _spike(entries: Sequence[LogEntry], now: datetime, baseline: timedelta) -> Spike | None:
+def _spike(
+    entries: Sequence[LogEntry], now: datetime, baseline: timedelta, thresholds: Thresholds
+) -> Spike | None:
     current_start = now - _MINUTE
     history_start = now - _MINUTE - baseline
     first = min((e.timestamp for e in entries), default=now)
@@ -211,12 +232,14 @@ def _spike(entries: Sequence[LogEntry], now: datetime, baseline: timedelta) -> S
     # ponytail: stdev floor of 1 so a flat-zero baseline doesn't make every error a spike;
     # switch to a robust (median/MAD) baseline if noisy sources trip it.
     z = (current - mean) / max(stdev, 1.0)
-    if current >= SPIKE_MIN_ERRORS and z >= SPIKE_Z:
+    if current >= thresholds.spike_min_errors and z >= thresholds.spike_z:
         return Spike(current, mean, stdev, z)
     return None
 
 
-def _with_summary(insight: SourceInsight, minutes: float) -> SourceInsight:
+def _with_summary(
+    insight: SourceInsight, minutes: float, fields: Mapping[str, str]
+) -> SourceInsight:
     span = f"{minutes:g} min"
     if insight.total == 0:
         parts = [f"{insight.source_id}: quiet, no events in the last {span}."]
@@ -241,7 +264,7 @@ def _with_summary(insight: SourceInsight, minutes: float) -> SourceInsight:
             f"Restarted {insight.restarts} time{_s(insight.restarts)}, most recently at "
             f"{insight.last_restart.astimezone():%H:%M:%S}."
         )
-    for key, label in KEY_FIELDS.items():
+    for key, label in fields.items():
         if values := insight.top.get(key):
             value, count = values[0]
             parts.append(f"Most frequent {label}: {value} ({count} event{_s(count)}).")
