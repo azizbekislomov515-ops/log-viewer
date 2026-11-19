@@ -33,6 +33,7 @@ COMPOSE_SERVICE = "com.docker.compose.service"
 COMPOSE_NUMBER = "com.docker.compose.container-number"
 COMPOSE_ONEOFF = "com.docker.compose.oneoff"
 COMPOSE_WORKDIR = "com.docker.compose.project.working_dir"
+COMPOSE_DEPENDS_ON = "com.docker.compose.depends_on"  # "db:service_healthy:false,..."
 
 STANDALONE_GROUP_ID = "docker:standalone"
 SDK_TIMEOUT = 10
@@ -185,6 +186,8 @@ def _to_source(c: _Container, group_id: str) -> LogSource:
         metadata["compose_project"] = c.labels[COMPOSE_PROJECT]
         metadata["compose_service"] = service or ""
         metadata["compose_working_dir"] = c.labels.get(COMPOSE_WORKDIR, "")
+        if depends := c.labels.get(COMPOSE_DEPENDS_ON):
+            metadata["compose_depends_on"] = depends
     return LogSource(
         id=f"docker:{c.name}",
         kind=SourceKind.DOCKER_CONTAINER,

@@ -171,3 +171,38 @@ class LineSplitter:
 def decode(line: bytes) -> str:
     """Bytes to text: UTF-8, invalid sequences replaced (logs are not always UTF-8)."""
     return line.decode("utf-8", "replace")
+
+
+async def merge_streams(*streams: AsyncIterator[RawRecord]) -> AsyncIterator[RawRecord]:
+    """Interleave several record streams as items arrive; ends when all have ended.
+
+    An error in any stream is raised here (and the others are cancelled). Bounded: a slow
+    consumer stops every producer.
+    """
+    queue: asyncio.Queue[RawRecord | BaseException | None] = asyncio.Queue(64)
+
+    async def pump(stream: AsyncIterator[RawRecord]) -> None:
+        try:
+            async for record in stream:
+                await queue.put(record)
+            await queue.put(None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await queue.put(exc)
+
+    tasks = [asyncio.create_task(pump(s)) for s in streams]
+    active = len(tasks)
+    try:
+        while active:
+            item = await queue.get()
+            if item is None:
+                active -= 1
+            elif isinstance(item, BaseException):
+                raise item
+            else:
+                yield item
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

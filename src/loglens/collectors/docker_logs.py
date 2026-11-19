@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import functools
 import logging
 import struct
 import threading
+import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -27,6 +29,7 @@ from loglens.collectors.base import (
     ErrorCallback,
     LineSplitter,
     decode,
+    merge_streams,
     reconnecting,
 )
 from loglens.core.models import LogSource, RawRecord
@@ -126,8 +129,69 @@ class SdkDockerLogAPI:
         api._disable_socket_timeout(api._get_raw_response_socket(response))
         return _SdkLogStream(response)
 
+    def events(self, name: str, since: int) -> EventStream:
+        """Lifecycle events of container ``name`` since ``since`` (epoch seconds)."""
+        stream: EventStream = self._client.api.events(
+            since=since, filters={"container": name, "type": "container"}, decode=True
+        )
+        return stream
+
     def close(self) -> None:
         self._client.close()
+
+
+class EventStream(Protocol):
+    """A blocking iterator of decoded Docker event dicts that can be closed."""
+
+    def __iter__(self) -> Iterator[Mapping[str, Any]]:
+        """Yield events as they happen."""
+        ...
+
+    def close(self) -> None:
+        """Stop the stream (unblocks the reading thread)."""
+        ...
+
+
+#: Container actions shown in the container's own stream. ``exec_*`` (every health check
+#: runs one) and ``attach``/``resize``/``top`` are noise.
+EVENT_ACTIONS = frozenset(
+    {
+        "create",
+        "start",
+        "restart",
+        "die",
+        "kill",
+        "oom",
+        "stop",
+        "pause",
+        "unpause",
+        "destroy",
+        "health_status",
+    }
+)
+#: How far back lifecycle events are read the first time a container is followed.
+EVENT_HISTORY_S = 3600
+
+
+def event_record(source_id: str, event: Mapping[str, Any]) -> tuple[int, RawRecord] | None:
+    """A Docker event as ``(time_ns, record)`` in ``docker events`` text form, e.g.
+    ``2026-11-19T08:26:10.563+00:00 container die 4f1e... (exitCode=1, image=x, name=y)``.
+
+    Labels (dotted keys) are left out; the rule packs match this text. None for noise.
+    """
+    action = str(event.get("Action") or event.get("status") or "")
+    if action.split(":", 1)[0] not in EVENT_ACTIONS:
+        return None
+    actor = event.get("Actor") or {}
+    attributes = actor.get("Attributes") or {}
+    container_id = str(actor.get("ID") or event.get("id") or "")
+    time_ns = int(event.get("timeNano") or int(event.get("time") or 0) * 1_000_000_000)
+    stamp = datetime.fromtimestamp(time_ns / 1e9, UTC)
+    details = ", ".join(f"{k}={v}" for k, v in sorted(attributes.items()) if "." not in k)
+    text = (
+        f"{stamp.isoformat(timespec='milliseconds')} container {action} {container_id} ({details})"
+    )
+    return time_ns, RawRecord(source_id, text, stamp, fields={"stream": "events"})
 
 
 class DockerCollector:
@@ -138,9 +202,11 @@ class DockerCollector:
         api_factory: Callable[[], DockerLogAPI] = SdkDockerLogAPI,
         *,
         backoff_max: float = 5.0,
+        events: bool = True,
     ) -> None:
         self._api_factory = api_factory
         self._backoff_max = backoff_max
+        self._events = events
 
     def stream(
         self,
@@ -160,7 +226,7 @@ class DockerCollector:
                 source.id, name, cursor=cur, since=since, lines=lines, follow=follow
             )
 
-        return reconnecting(
+        logs = reconnecting(
             open_stream,
             source.id,
             cursor=cursor,
@@ -168,6 +234,44 @@ class DockerCollector:
             backoff=Backoff(maximum=self._backoff_max),
             on_error=on_error,
         )
+        if not (follow and self._events):
+            return logs
+        # Lifecycle events (start, die with exit code, oom, health) join the container's own
+        # stream. On resume, from the last stored log line's time (a few duplicate events
+        # are possible across app restarts); otherwise the last hour of history.
+        resume_ns = Position.parse(cursor).resume_ts
+        since_ns = resume_ns or (time.time_ns() - EVENT_HISTORY_S * 1_000_000_000)
+        return merge_streams(logs, self._lifecycle(source.id, name, since_ns, on_error))
+
+    async def _lifecycle(
+        self, source_id: str, name: str, since_ns: int, on_error: ErrorCallback | None
+    ) -> AsyncIterator[RawRecord]:
+        """Follow ``name``'s lifecycle events forever, reconnecting with backoff. Events
+        carry no cursor: the source's resume cursor stays the log position."""
+        backoff = Backoff(maximum=self._backoff_max)
+        while True:
+            api = await asyncio.to_thread(self._api_factory)
+            try:
+                events = getattr(api, "events", None)
+                if events is None:
+                    return  # an API without events (tests, old adapters)
+                stream = await asyncio.to_thread(events, name, since_ns // 1_000_000_000)
+                async for event in _iterate_in_thread(stream, f"docker-events:{name}"):
+                    found = event_record(source_id, event)
+                    if found is None or found[0] <= since_ns:
+                        continue  # noise, or already delivered (``since`` is in seconds)
+                    since_ns = found[0]
+                    backoff.reset()
+                    yield found[1]
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("docker events error, will retry", extra={"source": source_id})
+                if on_error is not None:
+                    on_error(source_id, exc)
+            finally:
+                await asyncio.to_thread(api.close)
+            await asyncio.sleep(backoff.next_delay())
 
     async def _attach(
         self,
@@ -245,6 +349,39 @@ async def _pump(
     finally:
         stop.set()
         stream.close()
+        await asyncio.to_thread(thread.join, 5)
+
+
+async def _iterate_in_thread(stream: EventStream, name: str) -> AsyncIterator[Mapping[str, Any]]:
+    """Consume a blocking iterator in a thread, with backpressure; closing the async
+    iterator closes the stream (which unblocks the thread)."""
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[Mapping[str, Any] | BaseException | None] = asyncio.Queue(64)
+    stop = threading.Event()
+
+    def reader() -> None:
+        try:
+            for item in stream:
+                if stop.is_set():
+                    return
+                asyncio.run_coroutine_threadsafe(queue.put(item), loop).result()
+            asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
+        except BaseException as exc:
+            if not stop.is_set():
+                with contextlib.suppress(Exception):
+                    asyncio.run_coroutine_threadsafe(queue.put(exc), loop).result()
+
+    thread = threading.Thread(target=reader, name=name, daemon=True)
+    thread.start()
+    try:
+        while (item := await queue.get()) is not None:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+    finally:
+        stop.set()
+        with contextlib.suppress(Exception):
+            stream.close()
         await asyncio.to_thread(thread.join, 5)
 
 

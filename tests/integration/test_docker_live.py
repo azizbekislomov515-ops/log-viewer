@@ -68,10 +68,16 @@ async def test_kill_restart_recreate_no_duplicates(docker_client: Any, local_ima
         with contextlib.suppress(Exception):
             container.remove(force=True)
 
-    keys = [(r.timestamp, r.fields["stream"], r.message) for r in got]
+    events = [r.message for r in got if r.fields["stream"] == "events"]
+    logs = [r for r in got if r.fields["stream"] != "events"]
+    keys = [(r.timestamp, r.fields["stream"], r.message) for r in logs]
     assert len(keys) == len(set(keys)), "duplicate lines after reattach"
     assert boots() == 3
-    assert {r.fields["stream"] for r in got} == {"stdout", "stderr"}
+    assert {r.fields["stream"] for r in logs} == {"stdout", "stderr"}
+    # Lifecycle events joined the container's stream: the kill and both restarts.
+    assert any(" container die " in m and "exitCode=137" in m for m in events), events
+    assert sum(" container start " in m for m in events) >= 2, events
+    assert len(events) == len(set(events)), "duplicate events after reconnect"
     assert all(r.message.startswith("warn") for r in got if r.fields["stream"] == "stderr")
     for stream_name in ("stdout", "stderr"):
         times = [r.timestamp for r in got if r.fields["stream"] == stream_name]
