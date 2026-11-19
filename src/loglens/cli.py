@@ -207,6 +207,9 @@ def cmd_explain(path: Path, source: str | None, rules_dir: Path | None, *, out: 
         engine = ExplanationEngine.from_directory(rules_dir)
         source_id = source or f"file:{path.resolve()}"
     log_source = source_from_id(source_id)
+    if source is not None and ":" not in source:  # parse like the pack's source, label as the file
+        log_source = dataclasses.replace(log_source, id=f"file:{path.resolve()}")
+        source_id = log_source.id
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:

@@ -403,7 +403,7 @@ def test_cli_explain_with_pack_prints_explanations_and_summary(local_tz: None) -
     assert "Squid blocked 10.0.0.5 from opening a secure connection to facebook.com." in text
     assert "(no explanation available)" in text
     assert "entries explained." in text
-    assert "file:/var/log/squid/access.log: 35 events" in text
+    assert f"file:{FIXTURES / 'squid_access.log'}: 35 events" in text
 
 
 def test_cli_explain_default_source_and_errors(tmp_path: Path) -> None:
