@@ -56,14 +56,21 @@ uv sync
 uv run loglens
 ```
 
+**Build the package with Docker** (nothing else needed on the build machine):
+`docker build --target deb --output dist .` writes `dist/loglens_0.1.0_amd64.deb`.
+
 ## Quick start
 
 1. **First run:** a short guide shows what LogLens can read, with the exact command to
    fix anything it cannot, and lets you choose what to monitor. You can open it again from
    ⋯ > Getting started.
-2. **Pick a service** on the left (or press Ctrl+K and type its name) to see its logs live.
-3. **Select a line** and press Ctrl+E: the Explain panel says what it means.
-4. **Double-click a service** for its overview, or a Compose project for its dashboard.
+2. **Overview** shows what is happening across everything LogLens follows; **Timeline**,
+   **Access** (what it can read, and fixes), **Alerts** and **Settings** are one click
+   away in the bar on the left.
+3. **Pick a service** on the Sources page (or press Ctrl+K and type its name) to see its
+   logs live.
+4. **Select a line** and press Ctrl+E: the Explain panel says what it means.
+5. **Double-click a service** for its overview, or a Compose project for its dashboard.
 
 Want to see it with interesting logs first? Run `loglens --demo` to replay sample
 Squid, ClamAV, nginx, sshd and Docker logs. Or start the demo Compose stack described in

@@ -57,6 +57,15 @@ One logical change per commit, [Conventional Commits](https://www.conventionalco
 
 ## Packaging
 
+With only Docker installed (the Dockerfile runs everything as an unprivileged user):
+
+```sh
+docker build --target test .                 # ruff, mypy, bandit and the test suite
+docker build --target deb --output dist .    # dist/loglens_<version>_amd64.deb
+```
+
+Directly on the machine:
+
 ```sh
 packaging/deb/build-deb.sh            # dist/loglens_<version>_amd64.deb
 packaging/appimage/build-appimage.sh  # dist/LogLens-<version>-x86_64.AppImage
