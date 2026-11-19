@@ -16,6 +16,8 @@ from pytestqt.qtbot import QtBot
 from loglens.config import Settings
 from loglens.gui.app import launch
 
+pytestmark = pytest.mark.perf
+
 RATE = 20_000  # lines/s into one tab
 SECONDS = 6
 MAX_P99_MS = 100.0  # a frame later than this feels sluggish

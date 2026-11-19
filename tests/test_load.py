@@ -5,10 +5,14 @@ import os
 import resource
 from pathlib import Path
 
+import pytest
+
 from loglens.collectors import source_from_id
 from loglens.core.models import RawRecord, SourceKind
 from loglens.core.pipeline import IngestPipeline, PipelineLimits
 from loglens.storage import Storage
+
+pytestmark = pytest.mark.perf
 
 RATE = 50_000  # lines/s offered, in total
 DURATION = 10.0  # seconds

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import sys
 import tempfile
 from collections.abc import Sequence
@@ -127,6 +128,22 @@ def launch(
     return Launched(app, backend, worker, analytics, window)
 
 
+def _quit_on_signals(launched: Launched) -> None:
+    """SIGTERM/SIGINT/SIGHUP (logout, ``kill``, Ctrl-C) close the window and quit, so the
+    session is saved and the backend flushes, instead of the process dying mid-write."""
+
+    def stop(*_: object) -> None:
+        launched.window.close()
+        launched.app.quit()
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, stop)
+    # Python runs signal handlers only when it gets control; Qt's loop is C++.
+    wake = QTimer(launched.app)
+    wake.timeout.connect(lambda: None)
+    wake.start(250)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point of the ``loglens`` script."""
     parser = argparse.ArgumentParser(prog="loglens", description="LogLens desktop app")
@@ -188,6 +205,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     launched.window.show()
     if not settings.onboarded and not args.demo:
         QTimer.singleShot(0, launched.window.show_onboarding)
+    _quit_on_signals(launched)
     try:
         return launched.app.exec()
     finally:

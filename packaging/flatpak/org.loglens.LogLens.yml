@@ -1,0 +1,40 @@
+# DRAFT Flatpak manifest (not built in CI). Read packaging/flatpak/README.md first: a
+# sandboxed LogLens can see much less than the .deb, by design of the sandbox.
+#
+# Python dependencies: generate python3-requirements.json with flatpak-pip-generator
+# from `uv export --no-dev --no-hashes --no-emit-project` (PySide6 comes from the base app).
+app-id: org.loglens.LogLens
+runtime: org.kde.Platform
+runtime-version: "6.8"
+sdk: org.kde.Sdk
+base: io.qt.PySide.BaseApp
+base-version: "6.8"
+command: loglens
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Desktop notifications go through the portal-friendly notify-send equivalent.
+  - --talk-name=org.freedesktop.Notifications
+  # Read-only views of the host's logs. Group permissions still apply: the user must
+  # be allowed to read them on the host (systemd-journal / adm groups or ACLs).
+  - --filesystem=/var/log:ro
+  - --filesystem=/run/log/journal:ro
+  # The read-only helper (recommended for sandboxed installs): no group changes needed.
+  - --filesystem=/run/loglens-helper.sock
+  # Docker: deliberately NOT granted. Access to the Docker socket is root-equivalent and
+  # would void the sandbox. Users who accept that can add it with:
+  #   flatpak override --user --filesystem=/run/docker.sock org.loglens.LogLens
+modules:
+  - python3-requirements.json
+  - name: loglens
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-deps --no-build-isolation --prefix=/app .
+      - install -Dm644 packaging/share/org.loglens.LogLens.desktop -t /app/share/applications
+      - install -Dm644 packaging/share/org.loglens.LogLens.metainfo.xml -t /app/share/metainfo
+      - install -Dm644 packaging/share/org.loglens.LogLens.svg -t /app/share/icons/hicolor/scalable/apps
+    sources:
+      - type: dir
+        path: ../..
