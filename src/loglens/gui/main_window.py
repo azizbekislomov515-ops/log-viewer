@@ -7,6 +7,7 @@ is not looking at into unread badges. Database reads go through the ``Worker``.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -58,6 +59,7 @@ from PySide6.QtWidgets import (
 from loglens.config import Settings, save_settings
 from loglens.core.models import DiscoveryIssue, LogEntry, LogSource, ServiceGroup, Severity
 from loglens.gui import theme as themes
+from loglens.gui.insights_ui import Insights
 from loglens.gui.log_model import Column, LogTableModel, SearchSpec, plain_tooltip
 from loglens.gui.log_view import LogView
 from loglens.gui.source_tree import NodeKind, SourceTreeModel, TreeRole
@@ -86,11 +88,11 @@ CHIPS: tuple[tuple[str, frozenset[Severity]], ...] = (
     ("Debug", frozenset({Severity.DEBUG, Severity.TRACE})),
 )
 RANGES: tuple[tuple[str, str, timedelta | None], ...] = (
-    ("live", "Live (everything)", None),
-    ("5m", "Last 5 minutes", timedelta(minutes=5)),
+    ("live", "Live", None),
+    ("5m", "Last 5 min", timedelta(minutes=5)),
     ("1h", "Last hour", timedelta(hours=1)),
-    ("24h", "Last 24 hours", timedelta(hours=24)),
-    ("custom", "Custom range…", None),
+    ("24h", "Last 24 h", timedelta(hours=24)),
+    ("custom", "Custom…", None),
 )
 
 
@@ -325,13 +327,17 @@ class MainWindow(QMainWindow):
         *,
         settings_path: Path | None = None,
         state_path: Path | None = None,
+        analytics: Worker | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("LogLens")
         self.resize(1440, 900)
         self.backend = backend
         self.worker = worker
+        #: Runs overview/dashboard/notification analysis (the reader stays free for paging).
+        self.analytics = analytics or worker
         self.settings = settings
+        self._groups: tuple[ServiceGroup, ...] = ()
         self._settings_path = settings_path
         self._state_path = state_path
         self._issues: tuple[DiscoveryIssue, ...] = ()
@@ -347,6 +353,7 @@ class MainWindow(QMainWindow):
         self.tree_model.set_pinned(settings.pinned)
         self._build_tree_dock()
         self._build_central()
+        self.insights = Insights(self)
         self._build_toolbar()
         self._build_status_bar()
         self._build_issues_dock()
@@ -393,6 +400,7 @@ class MainWindow(QMainWindow):
         self.tree.setItemDelegate(self.tree_delegate)
         self.tree.activated.connect(self._tree_activated)
         self.tree.clicked.connect(self._tree_activated)
+        self.tree.doubleClicked.connect(self._tree_double_clicked)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(6, 6, 0, 0)
@@ -429,7 +437,7 @@ class MainWindow(QMainWindow):
         self.search.setPlaceholderText("Search this tab  (Ctrl+F)")
         self.search.setAccessibleName("Search")
         self.search.setClearButtonEnabled(True)
-        self.search.setFixedWidth(240)
+        self.search.setFixedWidth(210)
         self.search.returnPressed.connect(lambda: self.next_match(forward=True))
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -483,12 +491,35 @@ class MainWindow(QMainWindow):
             bar, "Split", "Show each service of this group separately", checkable=True
         )
         self.split_btn.toggled.connect(self._set_split)
+        self.inline_btn = self._tool(
+            bar,
+            "Explain rows",
+            "Show a plain-language line under explained entries",
+            checkable=True,
+        )
+        self.inline_btn.setChecked(self.settings.inline_explanations != "off")
+        self.inline_btn.toggled.connect(self.insights._toggle_inline)
+        self.overview_btn = self._tool(
+            bar, "Overview", "What is happening in this tab's services (Ctrl+O)"
+        )
+        self.overview_btn.clicked.connect(self.overview_of_tab)
         menu_btn = self._tool(bar, "⋯", "More")
         menu = QMenu(menu_btn)
         menu.addAction("Jump to source…", QKeySequence("Ctrl+K"), self.show_palette)
         menu.addAction("Look for new sources now", self.backend.refresh_discovery)
         menu.addAction("Settings…", QKeySequence("Ctrl+,"), self.show_settings)
         menu.addAction("Discovery issues", lambda: self.issues_dock.setVisible(True))
+        menu.addSeparator()
+        menu.addAction("Overview of this tab", QKeySequence("Ctrl+O"), self.overview_of_tab)
+        menu.addAction("Export…", self.insights.export_view)
+        menu.addAction(
+            "Copy incident report", QKeySequence("Ctrl+Shift+C"), self.insights.copy_incident_report
+        )
+        density = menu.addMenu("Explanations under rows")
+        for mode, label in (("off", "Off"), ("compact", "Compact: title after the line"),
+                            ("full", "Full: a second line")):  # fmt: skip
+            density.addAction(label, functools.partial(self.insights.set_inline_mode, mode))
+        menu.addAction("Explain panel", QKeySequence("Ctrl+E"), self.toggle_explain_panel)
         menu_btn.setMenu(menu)
         menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.toolbar = bar
@@ -542,6 +573,9 @@ class MainWindow(QMainWindow):
         bind("F3", lambda: self.next_match(forward=True))
         bind("Shift+F3", lambda: self.next_match(forward=False))
         bind("Ctrl+Alt+D", self.overlay.toggle)
+        bind("Ctrl+E", self.toggle_explain_panel)
+        bind("Ctrl+O", self.overview_of_tab)
+        bind("Ctrl+Shift+C", self.insights.copy_incident_report)
         bind("Escape", self._escape)
         for n in range(1, 10):
             bind(
@@ -555,6 +589,7 @@ class MainWindow(QMainWindow):
         self, groups: tuple[ServiceGroup, ...], issues: tuple[DiscoveryIssue, ...]
     ) -> None:
         expanded = self._expanded_nodes()
+        self._groups = groups
         rebuilt = self.tree_model.update(groups, self.settings.excluded)
         if rebuilt:
             self._restore_expanded(expanded or {"cat:compose", "cat:files", "cat:containers"})
@@ -563,6 +598,7 @@ class MainWindow(QMainWindow):
             tab.set_names(names)
         self._issues = issues
         self._update_issues()
+        self.insights._pages_update_sources()
         for source_id in self.settings.pinned:
             if (source := self.tree_model.source(source_id)) is not None and not self._follow_refs[
                 source_id
@@ -598,6 +634,33 @@ class MainWindow(QMainWindow):
         elif kind == NodeKind.GROUP:
             self.open_group(index.data(TreeRole.NODE_ID))
 
+    def _tree_double_clicked(self, proxy_index: QModelIndex) -> None:
+        """Double-click: Overview of a source, dashboard of a Compose project."""
+        index = self.tree_proxy.mapToSource(proxy_index)
+        kind, node_id = index.data(TreeRole.KIND), index.data(TreeRole.NODE_ID)
+        if kind == NodeKind.SOURCE:
+            self.insights.open_overview([node_id])
+        elif kind == NodeKind.GROUP and str(node_id).startswith("compose"):
+            self.insights.open_dashboard(node_id)
+        elif kind == NodeKind.GROUP:
+            self._group_overview(node_id)
+
+    def _group_overview(self, group_id: str) -> None:
+        group = self.tree_model.group(group_id)
+        if group is not None:
+            self.insights.open_overview([s.id for s in group.sources], group.name)
+
+    def overview_of_tab(self) -> None:
+        """Overview of the current log tab's sources (Ctrl+O)."""
+        tab = self._tab()
+        if tab is not None:
+            self.insights.open_overview(tab.state.source_ids, tab.state.title)
+
+    def toggle_explain_panel(self) -> None:
+        """Show or hide the Explain dock (Ctrl+E)."""
+        dock = self.insights.explain_dock
+        dock.setVisible(not dock.isVisible())
+
     def _tree_menu(self, pos: QPoint) -> None:
         index = self.tree_proxy.mapToSource(self.tree.indexAt(pos))
         kind = index.data(TreeRole.KIND)
@@ -612,9 +675,18 @@ class MainWindow(QMainWindow):
                 lambda: self.set_pinned(node_id, not pinned),
             )
             menu.addAction("Copy ID", lambda: QGuiApplication.clipboard().setText(node_id))
+            menu.addAction("Overview", lambda: self.insights.open_overview([node_id]))
+            muted = node_id in self.settings.muted
+            menu.addAction(
+                "Unmute notifications" if muted else "Mute notifications",
+                lambda: self.insights.set_muted(node_id, not muted),
+            )
         elif kind == NodeKind.GROUP:
             menu.addAction("Open all services", lambda: self.open_group(node_id))
             menu.addAction("Open in new tab", lambda: self.open_group(node_id, new_tab=True))
+            menu.addAction("Overview", lambda: self._group_overview(node_id))
+            if str(node_id).startswith("compose"):
+                menu.addAction("Project dashboard", lambda: self.insights.open_dashboard(node_id))
             menu.addAction("Copy ID", lambda: QGuiApplication.clipboard().setText(node_id))
         menu.addSeparator()
         menu.addAction("Look for new sources now", self.backend.refresh_discovery)
@@ -685,18 +757,21 @@ class MainWindow(QMainWindow):
                 self._follow(source)
         index = self.tabs.addTab(tab, state.title)
         self.tabs.setTabToolTip(index, plain_tooltip(", ".join(state.source_ids)))
-        close = QToolButton(self.tabs)
-        close.setText("×")  # noqa: RUF001 (a real multiplication sign: the close glyph)
-        close.setObjectName("tabClose")
-        close.setToolTip("Close tab (Ctrl+W)")
-        close.setAccessibleName(f"Close {state.title}")
-        close.setAutoRaise(True)
-        close.clicked.connect(lambda _=False, t=tab: self.close_tab(self.tabs.indexOf(t)))
-        self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close)
+        self._add_close_button(index, tab, state.title)
         self.tabs.setCurrentIndex(index)
         self.stack.setCurrentWidget(self.tabs)
         self._save_session()
         return tab
+
+    def _add_close_button(self, index: int, page: QWidget, title: str) -> None:
+        close = QToolButton(self.tabs)
+        close.setText("×")  # noqa: RUF001 (a real multiplication sign: the close glyph)
+        close.setObjectName("tabClose")
+        close.setToolTip("Close tab (Ctrl+W)")
+        close.setAccessibleName(f"Close {title}")
+        close.setAutoRaise(True)
+        close.clicked.connect(lambda _=False, p=page: self.close_tab(self.tabs.indexOf(p)))
+        self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close)
 
     def _wire_views(self, tab: LogTab) -> None:
         for view in tab.views:
@@ -705,6 +780,11 @@ class MainWindow(QMainWindow):
             )
             view.model.searchFinished.connect(self._on_search_finished)
             view.followChanged.connect(lambda on, t=tab: self._on_follow_changed(t, on))
+            view.tree.selectionModel().currentRowChanged.connect(
+                lambda current, _prev, v=view: self.insights._explain_row(v, current)
+            )
+            view.context_actions = lambda v=view: self.insights._log_view_actions(v)
+            self.insights._apply_inline(view)
 
     def _on_follow_changed(self, tab: LogTab, follow: bool) -> None:
         if tab is self._tab():
@@ -714,6 +794,12 @@ class MainWindow(QMainWindow):
     def close_tab(self, index: int) -> None:
         """Close a tab and stop following sources nothing else needs."""
         widget = self.tabs.widget(index)
+        if widget is not None and self.insights._close_page(widget):
+            self.tabs.removeTab(index)
+            widget.deleteLater()
+            if not self.tabs.count():
+                self.stack.setCurrentWidget(self.empty)
+            return
         if not isinstance(widget, LogTab):
             return
         self.tabs.removeTab(index)
@@ -729,12 +815,17 @@ class MainWindow(QMainWindow):
         tab = self._tab()
         if tab is not None:
             self.tree_model.clear_unread(tab.state.source_ids)
+            self.insights._explain_row(tab.view, tab.view.tree.currentIndex())
+        else:
+            self.insights.explain_panel.show_entry(None, None)
         self._sync_toolbar()
 
     def _sync_toolbar(self) -> None:
         """Show the active tab's filters in the toolbar (filters are per tab)."""
         tab = self._tab()
         enabled = tab is not None
+        self.overview_btn.setEnabled(enabled)
+        self.inline_btn.setEnabled(enabled)
         for widget in (
             self.search,
             self.regex_btn,
@@ -873,6 +964,8 @@ class MainWindow(QMainWindow):
         if entries:
             for tab in self._all_tabs():
                 tab.append_live(entries)
+            self.insights._pages_mark_dirty(entries)
+            self.insights.live_explainer.feed(entries)
             current = self._tab()
             visible = set(current.state.source_ids) if current and self.isActiveWindow() else set()
             unread = Counter(
@@ -925,6 +1018,9 @@ class MainWindow(QMainWindow):
         self._theme = theme
         self.tree_delegate.theme = theme
         self.issues_panel.theme = theme
+        self.insights.explain_panel.theme = theme
+        for page in self.insights._pages:
+            page.set_theme(theme)
         self.issues_panel.set_issues(self._issues, self._collector_errors)
         for tab in self._all_tabs():
             tab.set_theme(theme, self._font)
@@ -949,6 +1045,7 @@ class MainWindow(QMainWindow):
             self.apply_theme(theme)
         if self.settings.discovery_exclude != old.discovery_exclude:
             self.backend.refresh_discovery()
+        self.insights._settings_changed_insights(old)
 
     def _save_settings(self) -> None:
         try:
@@ -1000,4 +1097,6 @@ class MainWindow(QMainWindow):
         self._save_session()
         self._drain_timer.stop()
         self.frame_meter.stop()
+        for page in self.insights._pages:
+            page.model.stop()
         super().closeEvent(event)

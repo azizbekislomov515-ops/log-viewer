@@ -70,6 +70,12 @@ class LogDelegate(QStyledItemDelegate):
         self._view = view
         self.theme = themes.DARK
         self.wrap = False
+        self.inline = "off"  # off | compact | full: explanation shown with each row
+
+    @property
+    def variable_rows(self) -> bool:
+        """Whether row heights depend on content (wrap, or full inline explanations)."""
+        return self.wrap or self.inline == "full"
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: AnyIndex) -> None:
         t = self.theme
@@ -155,6 +161,9 @@ class LogDelegate(QStyledItemDelegate):
         extra = int(index.data(Role.EXTRA_LINES) or 0)
         expanded = bool(index.data(Role.EXPANDED))
         badge = f" +{extra} lines" if extra and not expanded else ""
+        explanation = index.data(Role.EXPLANATION) if self.inline != "off" else None
+        if explanation is not None and self.inline == "compact":
+            badge = f"  → {explanation.title}{badge}"
         lines = text.split("\n") if (expanded or self.wrap) else [text]
         if self.wrap:
             lines = [part for line in lines for part in _wrap(line, fm, rect.width())]
@@ -179,9 +188,18 @@ class LogDelegate(QStyledItemDelegate):
             )
             painter.drawText(QRect(x, y, rect.width(), line_h), Qt.AlignmentFlag.AlignLeft, elided)
             y += line_h
+        if explanation is not None and self.inline == "full":
+            painter.setPen(QColor(t.dim))
+            note = fm.elidedText(
+                f"↳ {explanation.plain_text}", Qt.TextElideMode.ElideRight, rect.width()
+            )
+            painter.drawText(
+                QRect(rect.left(), y, rect.width(), line_h), Qt.AlignmentFlag.AlignLeft, note
+            )
         if badge:
             painter.setPen(QColor(t.dim))
-            width = fm.horizontalAdvance(badge)
+            width = min(fm.horizontalAdvance(badge), rect.width() // 2)
+            badge = fm.elidedText(badge, Qt.TextElideMode.ElideRight, width)
             painter.drawText(
                 QRect(rect.right() - width, rect.top() + 3, width, line_h),
                 Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
@@ -195,14 +213,15 @@ class LogDelegate(QStyledItemDelegate):
         if index.column() != Column.MESSAGE:
             return QSize(fm.horizontalAdvance(str(index.data() or "")) + 12, base)
         expanded = bool(index.data(Role.EXPANDED))
+        note = 1 if self.inline == "full" and index.data(Role.EXPLANATION) is not None else 0
         if not (expanded or self.wrap):
-            return QSize(200, base)
+            return QSize(200, base + note * fm.height())
         text = str(index.data() or "")
         width = max(self._view.header().sectionSize(Column.MESSAGE) - RAIL - 8, 50)
         lines = text.split("\n")
         if self.wrap:
             lines = [p for line in lines for p in _wrap(line, fm, width)]
-        return QSize(200, fm.height() * len(lines) + 6)
+        return QSize(200, fm.height() * (len(lines) + note) + 6)
 
 
 def _wrap(line: str, fm: QFontMetrics, width: int) -> list[str]:
@@ -340,6 +359,8 @@ class LogView(QWidget):
         layout.addWidget(self.caption)
         layout.addLayout(row)
         self.follow = True
+        #: Extra context-menu actions supplied by the window (explain, report, export).
+        self.context_actions: Callable[[], list[QAction]] | None = None
         self._tall_rows: set[int] = set()  # rows whose height differs from the default
         self._fit_timer = QTimer(self)
         self._fit_timer.setSingleShot(True)
@@ -350,7 +371,9 @@ class LogView(QWidget):
         model.rowsRemoved.connect(lambda *_: self._on_reset())
         model.blocksChanged.connect(self.map.update)
         model.searchFinished.connect(lambda *_: self.map.update())
-        model.dataChanged.connect(lambda *_: self.delegate.wrap and self._fit_timer.start())
+        model.dataChanged.connect(
+            lambda *_: self.delegate.variable_rows and self._fit_timer.start()
+        )
         self.tree.doubleClicked.connect(self._toggle_row)
         self.tree.header().customContextMenuRequested.connect(self._header_menu)
         self.tree.verticalScrollBar().valueChanged.connect(self._on_scrolled)
@@ -404,7 +427,16 @@ class LogView(QWidget):
         """Wrap long messages. Only rows on screen are measured (and re-measured as you
         scroll), so wrapping stays cheap with a million rows."""
         self.delegate.wrap = wrap
-        if wrap:
+        self._apply_row_mode()
+
+    def set_inline(self, mode: str) -> None:
+        """Show explanations with rows: off, compact (title after the message) or full
+        (a second line under explained rows)."""
+        self.delegate.inline = mode
+        self._apply_row_mode()
+
+    def _apply_row_mode(self) -> None:
+        if self.delegate.variable_rows:
             self._fit_visible_rows()
         else:
             self._reset_heights(keep_expanded=True)
@@ -420,7 +452,7 @@ class LogView(QWidget):
         return range(first, last + 1)
 
     def _fit_visible_rows(self) -> None:
-        if not self.delegate.wrap:
+        if not self.delegate.variable_rows:
             return
         header = self.tree.verticalHeader()
         option = QStyleOptionViewItem()
@@ -446,19 +478,19 @@ class LogView(QWidget):
     def _on_appended(self, _count: int) -> None:
         if self.follow:
             self.tree.scrollToBottom()
-        if self.delegate.wrap:
+        if self.delegate.variable_rows:
             self._fit_timer.start()
 
     def _on_reset(self) -> None:
         self._tall_rows.clear()
         if self.follow:
             self.tree.scrollToBottom()
-        if self.delegate.wrap:
+        if self.delegate.variable_rows:
             self._fit_timer.start()
 
     def _on_scrolled(self, value: int) -> None:
         bar = self.tree.verticalScrollBar()
-        if self.delegate.wrap:
+        if self.delegate.variable_rows:
             self._fit_timer.start()
         at_bottom = value >= bar.maximum() - 2
         if self.follow and not at_bottom and bar.isSliderDown():
@@ -495,7 +527,7 @@ class LogView(QWidget):
         row = index.row()
         expanded = self.model.toggle_expanded(row)
         header = self.tree.verticalHeader()
-        if expanded or self.delegate.wrap:
+        if expanded or self.delegate.variable_rows:
             height = self.delegate.sizeHint(
                 QStyleOptionViewItem(), self.model.index(row, Column.MESSAGE)
             ).height()
@@ -533,6 +565,10 @@ class LogView(QWidget):
             toggle = menu.addAction(
                 "Collapse lines" if index.data(Role.EXPANDED) else "Expand lines"
             )
+        if self.context_actions is not None:
+            menu.addSeparator()
+            for action in self.context_actions():
+                menu.addAction(action)
         chosen = menu.exec(event.globalPos())
         if chosen is copy_text:
             self.copy_selected(as_json=False)
@@ -564,7 +600,7 @@ class LogView(QWidget):
         if (
             watched is self.tree.viewport()
             and event.type() == QEvent.Type.Resize
-            and self.delegate.wrap
+            and self.delegate.variable_rows
         ):
             self._fit_timer.start()
         wheel_up = isinstance(event, QWheelEvent) and event.angleDelta().y() > 0

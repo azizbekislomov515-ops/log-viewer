@@ -18,6 +18,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from loglens.collectors.discovery.base import Discoverer
 from loglens.config import THEMES, Settings, default_config_path, load_settings
 from loglens.core.models import SourceKind
 from loglens.gui import theme as themes
@@ -36,13 +37,15 @@ class Launched:
     app: QApplication
     backend: Backend
     worker: DbWorker
+    analytics: DbWorker
     window: MainWindow
 
     def close(self) -> None:
-        """Close the window, stop the backend thread, then the reader thread."""
+        """Close the window, stop the backend thread, then the worker threads."""
         self.window.close()
         self.backend.stop()
         self.worker.shutdown()
+        self.analytics.shutdown()
 
 
 def launch(
@@ -54,6 +57,7 @@ def launch(
     config_path: Path | None = None,
     state_path: Path | None = None,
     start: bool = True,
+    discoverers: Sequence[Discoverer] | None = None,
 ) -> Launched:
     """Create the QApplication (if needed), theme, backend, reader and window.
 
@@ -84,14 +88,22 @@ def launch(
 
         backend = Backend(
             db_path,
-            default_discoverers(),
+            default_discoverers() if discoverers is None else discoverers,
             default_collectors(),
             retention=settings.retention,
             discovery_interval=settings.discovery_interval_s,
         )
     # The reader opens its connection lazily (first job), after the backend migrated the DB.
     worker = DbWorker(db_path)
-    window = MainWindow(backend, worker, settings, settings_path=config_path, state_path=state_path)
+    analytics = DbWorker(db_path, name="loglens-analytics")
+    window = MainWindow(
+        backend,
+        worker,
+        settings,
+        settings_path=config_path,
+        state_path=state_path,
+        analytics=analytics,
+    )
     window.apply_theme(theme)
     if start:
         backend.start()  # after the window is connected: the first discovery is not lost
@@ -103,7 +115,7 @@ def launch(
             window.apply_theme(new)
 
     app.styleHints().colorSchemeChanged.connect(follow_system)
-    return Launched(app, backend, worker, window)
+    return Launched(app, backend, worker, analytics, window)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -168,6 +180,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         launched.backend.stop()
         launched.worker.shutdown()
+        launched.analytics.shutdown()
         if tmp is not None:
             tmp.cleanup()
 

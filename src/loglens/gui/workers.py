@@ -96,11 +96,13 @@ class DbWorker(QObject):
     #: Emitted when a job fails and the caller gave no ``failed`` callback.
     error = Signal(str)
 
-    def __init__(self, db_path: Path | str, parent: QObject | None = None) -> None:
+    def __init__(
+        self, db_path: Path | str, parent: QObject | None = None, name: str = "loglens-db-reader"
+    ) -> None:
         super().__init__(parent)
         self.pending = 0
         self._thread = QThread()
-        self._thread.setObjectName("loglens-db-reader")
+        self._thread.setObjectName(name)
         self._runner = _Runner(db_path)
         self._runner.moveToThread(self._thread)
         self._request.connect(self._runner.run)

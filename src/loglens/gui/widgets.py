@@ -26,6 +26,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDateTimeEdit,
     QDialog,
@@ -48,9 +49,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from loglens.config import THEMES, Settings
+from loglens.config import INLINE_MODES, THEMES, Settings
 from loglens.core.models import DiscoveryIssue, LogSource, Severity, SourceKind, SourceStatus
 from loglens.gui import theme as themes
+from loglens.gui.notify import CONDITIONS
 from loglens.gui.source_tree import NodeKind, TreeRole
 
 AnyIndex = QModelIndex | QPersistentModelIndex
@@ -434,6 +436,19 @@ class SettingsDialog(QDialog):
         self.exclude = QPlainTextEdit("\n".join(settings.discovery_exclude))
         self.exclude.setAccessibleName("Hidden sources, one pattern per line")
         self.exclude.setFixedHeight(80)
+        self.inline = QComboBox()
+        self.inline.addItems(["Off", "Compact: title after the line", "Full: a second line"])
+        self.inline.setCurrentIndex(INLINE_MODES.index(settings.inline_explanations))
+        self.notify = {}
+        notify_box = QVBoxLayout()
+        for key, label in CONDITIONS.items():
+            box = QCheckBox(label)
+            box.setChecked(key in settings.notify_on)
+            self.notify[key] = box
+            notify_box.addWidget(box)
+        self.muted = QPlainTextEdit("\n".join(settings.muted))
+        self.muted.setAccessibleName("Sources that never notify, one id per line")
+        self.muted.setFixedHeight(60)
         self.interval = QSpinBox()
         self.interval.setRange(5, 3600)
         self.interval.setSuffix(" s")
@@ -450,6 +465,9 @@ class SettingsDialog(QDialog):
         hint.setProperty("role", "hint")
         form.addRow("", hint)
         form.addRow("Look for new sources every", self.interval)
+        form.addRow("Explanations under rows", self.inline)
+        form.addRow("Desktop notifications for", notify_box)
+        form.addRow("Never notify for", self.muted)
         note = QLabel("Retention changes apply the next time LogLens starts.")
         note.setProperty("role", "hint")
         buttons = QDialogButtonBox(
@@ -461,7 +479,7 @@ class SettingsDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(note)
         layout.addWidget(buttons)
-        self.resize(560, 520)
+        self.resize(580, 720)
 
     def _add_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Rule pack folder")
@@ -479,6 +497,9 @@ class SettingsDialog(QDialog):
             rule_dirs=tuple(self.rule_dirs.item(i).text() for i in range(self.rule_dirs.count())),
             discovery_exclude=patterns,
             discovery_interval_s=self.interval.value(),
+            inline_explanations=INLINE_MODES[self.inline.currentIndex()],
+            notify_on=tuple(k for k, box in self.notify.items() if box.isChecked()),
+            muted=tuple(m.strip() for m in self.muted.toPlainText().splitlines() if m.strip()),
         )
 
 

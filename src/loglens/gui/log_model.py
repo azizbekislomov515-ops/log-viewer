@@ -37,7 +37,7 @@ from PySide6.QtCore import (
     Signal,
 )
 
-from loglens.core.models import LogEntry, Severity
+from loglens.core.models import Explanation, LogEntry, Severity
 from loglens.gui.workers import Worker
 from loglens.storage import EntryQuery, Storage
 
@@ -77,6 +77,7 @@ class Role(IntEnum):
     EXPANDED = Qt.ItemDataRole.UserRole + 4
     EXTRA_LINES = Qt.ItemDataRole.UserRole + 5
     SOURCE_ID = Qt.ItemDataRole.UserRole + 6
+    EXPLANATION = Qt.ItemDataRole.UserRole + 7
 
 
 HEADERS = {
@@ -184,6 +185,9 @@ class LogTableModel(QAbstractTableModel):
         self._match_ids: set[int] = set()
         self._match_rows: list[int] = []
         self._search_token = 0
+        self._explainer: Callable[[LogEntry], Explanation | None] | None = None
+        self._explanations: OrderedDict[int, Explanation | None] = OrderedDict()
+        self.inline_mode = "off"
         self.stats = {"pages": 0, "appended": 0}
 
     # ------------------------------------------------------------------ Qt model API
@@ -204,7 +208,7 @@ class LogTableModel(QAbstractTableModel):
             return HEADERS.get(Column(section)) if 0 <= section < len(Column) else None
         return None
 
-    def data(self, index: AnyIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:  # noqa: PLR0911
+    def data(self, index: AnyIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:  # noqa: PLR0911, PLR0912
         """Cell data. Unloaded rows return a placeholder and trigger a page fetch."""
         row = index.row()
         if not index.isValid() or not 0 <= row < len(self._ids):
@@ -226,6 +230,8 @@ class LogTableModel(QAbstractTableModel):
         match role:
             case Qt.ItemDataRole.DisplayRole:
                 return self._display(entry, Column(index.column()))
+            case Role.EXPLANATION:
+                return self.explanation_for(entry)
             case Role.EXTRA_LINES:
                 return entry.message.count("\n")
             case Role.SOURCE_ID:
@@ -468,6 +474,29 @@ class LogTableModel(QAbstractTableModel):
             self._worker.submit(lambda s: s.entries_by_id(missing), finish)
         else:
             finish([])
+
+    # ------------------------------------------------------------------ explanations
+
+    def set_explainer(
+        self, explainer: Callable[[LogEntry], Explanation | None] | None, inline_mode: str
+    ) -> None:
+        """How rows get explanations (for inline display) and how much to show."""
+        self._explainer = explainer
+        self.inline_mode = inline_mode
+        self._explanations.clear()
+        self._refresh_all()
+
+    def explanation_for(self, entry: LogEntry) -> Explanation | None:
+        """The (cached) explanation of a loaded entry, if an explainer is set."""
+        if self._explainer is None:
+            return None
+        if entry.id in self._explanations:
+            return self._explanations[entry.id]
+        explanation = self._explainer(entry)
+        self._explanations[entry.id] = explanation
+        while len(self._explanations) > CACHE_ENTRIES:
+            self._explanations.popitem(last=False)
+        return explanation
 
     # ------------------------------------------------------------------ display
 
