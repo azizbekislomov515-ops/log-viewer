@@ -7,6 +7,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import math
 import re
 import signal
 import sys
@@ -18,9 +19,12 @@ from typing import Any, TextIO
 
 from loglens.collectors import Collector, default_collectors, source_from_id
 from loglens.collectors.discovery import Discoverer, default_discoverers
-from loglens.core.models import LogEntry, LogSource, SourceKind
+from loglens.core.models import Explanation, LogEntry, LogSource, RawRecord, SourceKind
 from loglens.core.pipeline import IngestPipeline
 from loglens.core.registry import SourceRegistry
+from loglens.explain import ExplanationEngine, load_rules
+from loglens.explain.examples import run_examples
+from loglens.explain.insights import analyze
 from loglens.parsers import MultilineAssembler, Normalizer
 from loglens.parsers.multiline import assemble_stream
 from loglens.storage import Storage, StorageError, default_db_path
@@ -30,7 +34,7 @@ _MAX_NAME_WIDTH = 40
 _CONTROL_CHARS = dict.fromkeys([*range(0x20), *range(0x7F, 0xA0)], "?")
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 (command dispatch)
     """Entry point for the ``loglens-cli`` script."""
     parser = argparse.ArgumentParser(prog="loglens-cli", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true", help="log diagnostics to stderr")
@@ -56,6 +60,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     search.add_argument("--limit", type=int, default=50)
     search.add_argument("--db", type=Path, help="database path (default: XDG data dir)")
 
+    explain = sub.add_parser("explain", help="explain each line of a log file in plain language")
+    explain.add_argument("--file", type=Path, required=True, help="log file to read")
+    explain.add_argument(
+        "--source",
+        help="rule pack name (squid, clamav, ...) or a source id the lines come from "
+        "(default: file:<path>)",
+    )
+    explain.add_argument("--rules", type=Path, help="rules directory (default: rules/)")
+
+    rules = sub.add_parser("rules", help="check rule packs")
+    rules_sub = rules.add_subparsers(dest="rules_command", required=True)
+    lint = rules_sub.add_parser("lint", help="validate packs; report problems with file:line")
+    lint.add_argument("--rules", type=Path, help="rules directory (default: rules/)")
+    test = rules_sub.add_parser("test", help="run every rule's examples")
+    test.add_argument("--rules", type=Path, help="rules directory (default: rules/)")
+    test.add_argument("--pack", action="append", help="only this pack (repeatable)")
+
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING)
     try:
@@ -78,6 +99,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return asyncio.run(
                     cmd_collect(args.source_ids, args.db or default_db_path(), out=sys.stdout)
                 )
+            case "explain":
+                return cmd_explain(args.file, args.source, args.rules, out=sys.stdout)
+            case "rules" if args.rules_command == "lint":
+                return cmd_rules_lint(args.rules, out=sys.stdout)
+            case "rules":
+                return cmd_rules_test(args.rules, args.pack, out=sys.stdout)
             case _:
                 return cmd_search(
                     args.text,
@@ -163,6 +190,90 @@ def cmd_search(
     if not results:
         print("no matches", file=sys.stderr)
     return 0
+
+
+def cmd_explain(path: Path, source: str | None, rules_dir: Path | None, *, out: TextIO) -> int:
+    """Parse and explain every line of ``path``, then print a summary of the whole file.
+
+    ``source`` is a pack name (use only that pack, parse lines as its example source) or a
+    source id (all packs); by default the file is its own source (``file:<abs path>``).
+    """
+    if source is not None and ":" not in source:
+        engine = ExplanationEngine.from_directory(rules_dir, packs=[source])
+        if not engine.packs:
+            raise ValueError(f"no rule pack named {source!r}; see 'loglens-cli rules lint'")
+        source_id = engine.packs[0].example_source
+    else:
+        engine = ExplanationEngine.from_directory(rules_dir)
+        source_id = source or f"file:{path.resolve()}"
+    log_source = source_from_id(source_id)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"loglens-cli: error: {exc}", file=sys.stderr)
+        return 1
+    assembler, normalize = MultilineAssembler(), Normalizer()
+    records = [RawRecord(source_id, line) for line in text.splitlines()]
+    events = [e for r in records for e in assembler.feed(r, 0.0)] + assembler.flush()
+    entries: list[LogEntry] = []
+    explained = 0
+    for record in events:
+        # A line without its own timestamp happened "at" the previous line, not at ingest.
+        stamp = entries[-1].timestamp if entries else None
+        entry = normalize(log_source, dataclasses.replace(record, timestamp=stamp))
+        entries.append(entry)
+        explanation = engine.explain(entry, log_source)
+        explained += explanation is not None
+        out.write(format_entry(entry) + format_explanation(explanation))
+    out.write(f"\n{explained} of {len(entries)} entries explained.\n")
+    if entries:
+        span = max(e.timestamp for e in entries) - min(e.timestamp for e in entries)
+        window = timedelta(minutes=max(1, math.ceil(span / timedelta(minutes=1))))
+        insights = analyze(entries, window=window, explain=lambda e: engine.explain(e, log_source))
+        out.writelines(_safe(i.summary) + "\n" for i in insights.values())
+    return 0
+
+
+def format_explanation(explanation: Explanation | None) -> str:
+    """The indented explanation block printed under an entry."""
+    if explanation is None:
+        return "    (no explanation available)\n\n"
+    e = explanation
+    lines = [
+        f"    => {e.title}  [{e.severity_assessment.name.lower()}, {e.category.value}]",
+        f"       {e.plain_text}",
+    ]
+    if e.probable_cause:
+        lines.append(f"       Probable cause: {e.probable_cause}")
+    if e.suggested_action:
+        lines.append(f"       Next step: {e.suggested_action}")
+    if e.references:
+        lines.append(f"       See: {', '.join(e.references)}")
+    return "".join(_safe(line) + "\n" for line in lines) + "\n"
+
+
+def cmd_rules_lint(rules_dir: Path | None, *, out: TextIO) -> int:
+    """Load every pack and print each problem as ``file:line: message``. 1 if any."""
+    ruleset = load_rules(rules_dir)
+    for issue in ruleset.issues:
+        out.write(_safe(str(issue)) + "\n")
+    rules = len(ruleset.rules)
+    out.write(f"{len(ruleset.packs)} packs, {rules} rules, {len(ruleset.issues)} problems\n")
+    return 1 if ruleset.issues else 0
+
+
+def cmd_rules_test(rules_dir: Path | None, packs: Sequence[str] | None, *, out: TextIO) -> int:
+    """Run every rule's examples (all packs loaded, so shadowing shows up). 1 on failure."""
+    engine = ExplanationEngine(load_rules(rules_dir))
+    for issue in engine.issues:
+        out.write(_safe(f"load: {issue}") + "\n")
+    report = run_examples(engine, packs)
+    for failure in report.failures:
+        out.writelines(_safe(line) + "\n" for line in str(failure).split("\n"))
+    out.write(
+        f"{report.rules} rules, {report.examples} examples, {len(report.failures)} failures\n"
+    )
+    return 1 if report.failures or engine.issues or not report.rules else 0
 
 
 def format_entry(entry: LogEntry, *, with_source: bool = False, with_fields: bool = False) -> str:
