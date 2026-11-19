@@ -1,4 +1,8 @@
 import os
+
+# GUI tests run without a display (CI); must be set before Qt creates the application.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import time
 from collections.abc import Iterator
 
