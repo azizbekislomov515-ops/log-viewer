@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
+
+# subprocess: argv lists built by our code only, never a shell.
+import subprocess  # nosec B404
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -62,7 +64,7 @@ def run_command(args: Sequence[str], timeout: float = DEFAULT_TIMEOUT) -> Comman
     argv = list(args)
     env = {**os.environ, "LC_ALL": "C", "SYSTEMD_COLORS": "0"}
     try:
-        proc = subprocess.run(  # noqa: S603 - argv list, never shell; args come from our code
+        proc = subprocess.run(  # noqa: S603  # nosec B603
             argv, capture_output=True, text=True, timeout=timeout, check=False, env=env
         )
     except FileNotFoundError:

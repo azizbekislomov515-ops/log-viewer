@@ -36,6 +36,8 @@ dev = [
     "types-jsonschema>=4.26.0.20261006",
     "pytest-qt>=4.4",
     "types-regex>=2026.11.15.20261116",
+    "bandit>=1.9.4",
+    "pip-audit>=2.10.1",
 ]
 
 [build-system]
@@ -77,3 +79,9 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
     "integration: needs real Docker / journald; skipped automatically when unavailable",
 ]
+
+[tool.bandit]
+# B101 (assert): every assert in src narrows a type for an invariant already enforced
+# elsewhere (JSON Schema validation, Qt return types); none guards security, so -O is safe.
+skips = ["B101"]
+exclude_dirs = ["tests"]

@@ -445,7 +445,7 @@ class Storage:
         with self._lock:
             keys = self._source_keys(source_ids)
             rows = self._conn.execute(
-                f"SELECT ts / ? AS b, severity, COUNT(*) FROM entries "  # noqa: S608
+                f"SELECT ts / ? AS b, severity, COUNT(*) FROM entries "  # noqa: S608  # nosec B608
                 f"WHERE source IN ({_marks(keys)}) AND ts >= ? AND ts <= ? "
                 "GROUP BY b, severity ORDER BY b",
                 (size, *keys, start, end),
@@ -484,7 +484,7 @@ class Storage:
             where.append("id IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?)")
             params.append(fts)
         # Only "?" placeholders and fixed SQL fragments are interpolated; values are params.
-        sql = f"SELECT id, severity FROM entries WHERE {' AND '.join(where)} ORDER BY id"  # noqa: S608
+        sql = f"SELECT id, severity FROM entries WHERE {' AND '.join(where)} ORDER BY id"  # noqa: S608  # nosec B608
         return sql, params
 
     def _source_keys(self, source_ids: Sequence[str]) -> list[int]:
@@ -492,7 +492,7 @@ class Storage:
         return [
             key
             for (key,) in self._conn.execute(
-                f"SELECT key FROM sources WHERE id IN ({_marks(source_ids)})",  # noqa: S608
+                f"SELECT key FROM sources WHERE id IN ({_marks(source_ids)})",  # noqa: S608  # nosec B608
                 list(source_ids),
             )
         ]
@@ -569,7 +569,7 @@ def migrate(conn: sqlite3.Connection) -> int:
         # executescript() cannot take parameters; the version is our own integer.
         try:
             conn.executescript(
-                f"BEGIN IMMEDIATE;\n{script}\n"
+                f"BEGIN IMMEDIATE;\n{script}\n"  # nosec B608
                 "DELETE FROM schema_version;\n"
                 f"INSERT INTO schema_version(version) VALUES ({int(target)});\n"
                 "COMMIT;"
