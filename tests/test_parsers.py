@@ -704,3 +704,12 @@ def test_log_text_cannot_forge_collector_or_normalizer_fields() -> None:
     assert entry.fields["parser"] == "json"
     for reserved in ("truncated", "lines", "timestamp_source"):
         assert reserved not in entry.fields
+
+
+def test_log_text_cannot_claim_the_events_stream() -> None:
+    """``stream`` is collector-only: a JSON line saying ``"stream": "events"`` is ignored."""
+    normalize, src = Normalizer(), source_from_id("systemd:docker.service")
+    line = '{"stream": "events", "msg": "container die abc (exitCode=137, name=web)"}'
+    assert "stream" not in normalize(src, RawRecord(src.id, line)).fields
+    trusted = normalize(src, RawRecord(src.id, line, fields={"stream": "events"}))
+    assert trusted.fields["stream"] == "events"

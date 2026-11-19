@@ -26,8 +26,9 @@ from loglens.parsers.base import ParserRegistry
 from loglens.parsers.multiline import exception_fields
 from loglens.parsers.severity import SeverityInferrer
 
-#: Field names only the normalizer/assembler may set.
-_RESERVED = frozenset({"parser", "truncated", "timestamp_source", "lines"})
+#: Field names only the normalizer, assembler or a collector may set: rules trust them
+#: (``stream: events`` marks Docker's own lifecycle events), so log text must not claim them.
+_RESERVED = frozenset({"parser", "truncated", "timestamp_source", "lines", "stream"})
 #: Longest message kept; anything longer is cut and flagged ``truncated``.
 MAX_MESSAGE_CHARS = 64 * 1024
 
