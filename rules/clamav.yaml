@@ -50,7 +50,7 @@ rules:
     template: >-
       ClamAV flagged {{ file }} as a potentially unwanted program ({{ signature }}): not
       necessarily malware, but software such as adware, a crack or a hacking tool.
-    action: Check whether {{ file }} is software you intended to have; remove it if not.
+    action: Check whether {{ file | shquote }} is software you intended to have; remove it if not.
     category: security
     severity_override: warning
     confidence: 0.7
@@ -72,7 +72,7 @@ rules:
     template: ClamAV found malware ({{ signature }}) in {{ file }}.
     cause: The file matches a known malicious signature; it most likely arrived by download, e-mail attachment or a shared folder.
     action: >-
-      Do not open {{ file }}. Move it to quarantine or delete it, then find out where it came
+      Do not open {{ file | shquote }}. Move it to quarantine or delete it, then find out where it came
       from and scan the machine(s) that touched it.
     category: security
     severity_override: critical
@@ -99,7 +99,7 @@ rules:
     template: ClamAV was not allowed to read {{ file }}, so this file was not checked.
     cause: The clamd service user (usually "clamav") has no read permission on the file or its folder.
     action: >-
-      Scan it with "clamdscan --fdpass {{ file }}" (passes your permissions), or grant the clamav
+      Scan it with "clamdscan --fdpass {{ file | shquote }}" (passes your permissions), or grant the clamav
       user read access if it should be scanned routinely.
     category: configuration
     severity_override: warning
@@ -116,7 +116,7 @@ rules:
       fields: {event: scan_error}
     extract: [file, error]
     template: ClamAV could not finish scanning {{ file }} ({{ error }}), so it was not checked.
-    action: Re-run the scan on {{ file }}; if it keeps failing, check free space in /tmp and the clamd log around this time.
+    action: Re-run the scan on {{ file | shquote }}; if it keeps failing, check free space in /tmp and the clamd log around this time.
     category: availability
     severity_override: warning
     examples:
@@ -325,7 +325,7 @@ rules:
     match:
       regex: Socket file (?P<socket>\S+) is in use by another process
     template: clamd cannot start because another process (probably an older clamd) already uses {{ socket }}.
-    action: Stop the other instance ("systemctl stop clamav-daemon"; "pkill clamd"), remove {{ socket }} if stale, then start clamd once.
+    action: Stop the other instance ("systemctl stop clamav-daemon"; "pkill clamd"), remove {{ socket | shquote }} if stale, then start clamd once.
     category: availability
     severity_override: error
     examples:
@@ -345,7 +345,7 @@ rules:
       A ClamAV tool could not talk to the clamd service at {{ socket }}{% if reason %}
       ({{ reason }}){% endif %}.
     cause: clamd is not running (it may still be loading signatures, or it crashed), or the socket path differs between clamd.conf and the tool.
-    action: Run "systemctl status clamav-daemon"; if it is running, compare LocalSocket in clamd.conf with {{ socket }}.
+    action: Run "systemctl status clamav-daemon"; if it is running, compare LocalSocket in clamd.conf with {{ socket | shquote }}.
     category: availability
     severity_override: error
     examples:
@@ -453,7 +453,7 @@ rules:
       regex: Can't query (?P<host>\S+)
     template: freshclam could not look up the latest signature versions via DNS ({{ host }}); it will try over HTTP instead.
     cause: The DNS server cannot resolve TXT records, or outbound DNS is blocked.
-    action: Usually harmless if the HTTP download that follows succeeds. If updates keep failing, test "dig TXT {{ host }}".
+    action: Usually harmless if the HTTP download that follows succeeds. If updates keep failing, test "dig TXT {{ host | shquote }}".
     category: availability
     severity_override: warning
     examples:
@@ -471,7 +471,7 @@ rules:
       regex: Can't download (?P<file>\S+) from (?P<url>\S+)
     template: freshclam could not download {{ file }} from {{ url }}.
     cause: No internet access from this machine, a proxy or firewall blocking it, or the mirror is temporarily unavailable.
-    action: Test with "curl -I {{ url }}". If you use a proxy, set HTTPProxyServer/HTTPProxyPort in freshclam.conf.
+    action: Test with "curl -I {{ url | shquote }}". If you use a proxy, set HTTPProxyServer/HTTPProxyPort in freshclam.conf.
     category: availability
     severity_override: error
     examples:

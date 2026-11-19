@@ -14,13 +14,16 @@ Matching a rule against an entry, in order (cheapest first):
    ``optional`` value is None in the template.
 
 Templates run in a Jinja2 sandbox with ``StrictUndefined``; rendered text has its
-whitespace collapsed so YAML block strings and ``{% if %}`` read cleanly.
+whitespace collapsed so YAML block strings and ``{% if %}`` read cleanly. ``action``
+templates suggest commands an admin may copy-paste, so every value printed there must go
+through ``| shquote`` (enforced at load time): a file named ``x; rm -rf ~`` stays one word.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import shlex
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,7 +31,7 @@ from typing import Any
 
 import jsonschema
 import yaml
-from jinja2 import StrictUndefined, Template, TemplateSyntaxError, meta
+from jinja2 import StrictUndefined, Template, TemplateSyntaxError, meta, nodes
 from jinja2.sandbox import SandboxedEnvironment
 
 from loglens.core.models import Category, Explanation, LogEntry, LogSource, Severity
@@ -207,6 +210,7 @@ def load_rules(directory: Path | None = None, *, packs: Iterable[str] | None = N
     directory = directory or DEFAULT_RULES_DIR
     wanted = None if packs is None else set(packs)
     env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
+    env.filters["shquote"] = _shquote
     loaded: list[Pack] = []
     issues: list[LoadIssue] = []
     seen: set[str] = set()
@@ -360,14 +364,36 @@ def _template(
     if source is None:
         return None
     try:
-        unknown = meta.find_undeclared_variables(env.parse(source)) - known
+        ast = env.parse(source)
+        unknown = meta.find_undeclared_variables(ast) - known
         template = env.from_string(source)
     except TemplateSyntaxError as exc:
         raise _RuleError(f"bad template: {exc.message}", [key]) from None
+    if key == "action" and not _all_shell_quoted(ast):
+        raise _RuleError(
+            "every value in 'action' must end with '| shquote': actions hold commands admins "
+            "copy-paste, and log text is untrusted",
+            [key],
+        )
     if unknown:
         names = ", ".join(sorted(unknown))
         raise _RuleError(f"template uses {names}: add to 'extract' or the regex groups", [key])
     return template
+
+
+def _shquote(value: Any) -> str:
+    """Jinja filter: quote a log-derived value for a shell command (``shlex.quote``)."""
+    return shlex.quote(str(value))
+
+
+def _all_shell_quoted(ast: nodes.Template) -> bool:
+    """True if every ``{{ ... }}`` prints a literal or ends with the ``shquote`` filter."""
+    return all(
+        isinstance(node, nodes.TemplateData | nodes.Const)
+        or (isinstance(node, nodes.Filter) and node.name == "shquote")
+        for output in ast.find_all(nodes.Output)
+        for node in output.nodes
+    )
 
 
 def _selector(raw: Mapping[str, Any] | None) -> Selector:

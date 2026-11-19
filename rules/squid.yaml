@@ -27,7 +27,7 @@ rules:
       Browsers normally do this once and then retry with credentials.
     cause: The proxy requires authentication (auth_param / proxy_auth ACL) and the request had none.
     action: >-
-      Ignore a single 407. If {{ client_ip }} keeps getting 407s, its proxy username or
+      Ignore a single 407. If {{ client_ip | shquote }} keeps getting 407s, its proxy username or
       password is wrong or missing.
     category: security
     severity_override: info
@@ -54,8 +54,8 @@ rules:
       secure connection to {{ domain }}.
     cause: An "http_access deny" rule in squid.conf matched this site or this client (for example a blocked-sites ACL).
     action: >-
-      Nothing to do if {{ domain }} is meant to be blocked. Otherwise find the acl that lists
-      {{ domain }} (grep -n '{{ domain }}' /etc/squid/squid.conf /etc/squid/*.acl) and adjust it.
+      Nothing to do if {{ domain | shquote }} is meant to be blocked. Otherwise find the acl that lists
+      {{ domain | shquote }} (grep -nF {{ domain | shquote }} /etc/squid/squid.conf /etc/squid/*.acl) and adjust it.
     category: security
     severity_override: notice
     references: ["man:squid(8)", "https://wiki.squid-cache.org/SquidFaq/SquidAcl"]
@@ -83,7 +83,7 @@ rules:
     cause: An "http_access deny" rule in squid.conf matched this address, domain or client.
     action: >-
       Nothing to do if this is intended (ads, blocked sites). Otherwise check which acl in
-      /etc/squid/squid.conf matches {{ domain or url }}.
+      /etc/squid/squid.conf matches {{ (domain or url) | shquote }}.
     category: security
     severity_override: notice
     references: ["https://wiki.squid-cache.org/SquidFaq/SquidAcl"]
@@ -106,7 +106,7 @@ rules:
     cause: >-
       Usually a program talking plain HTTPS or another protocol to the proxy port, or a client
       sending web requests to Squid without being set up to use a proxy.
-    action: Check how {{ client_ip }} is configured to use the proxy (proxy host, port and protocol).
+    action: Check how {{ client_ip | shquote }} is configured to use the proxy (proxy host, port and protocol).
     category: configuration
     severity_override: warning
     confidence: 0.7
@@ -152,7 +152,7 @@ rules:
       before the download finished.
     cause: The user closed the page or cancelled the download, or the client timed out on a slow server.
     action: >-
-      Nothing to do for occasional aborts. Many aborts to {{ domain or "the same site" }} point to a
+      Nothing to do for occasional aborts. Many aborts to {% if domain %}{{ domain | shquote }}{% else %}the same site{% endif %} point to a
       slow or overloaded web server.
     category: performance
     severity_override: info
@@ -176,7 +176,7 @@ rules:
       error page (503).
     cause: The name {{ domain }} did not resolve (DNS failure), or every address of the server refused or timed out.
     action: >-
-      On the proxy host, run "getent hosts {{ domain }}" and "curl -sI http://{{ domain }}/".
+      On the proxy host, run "getent hosts {{ domain | shquote }}" and "curl -sI http://{{ domain | shquote }}/".
       If DNS fails, check dns_nameservers in squid.conf and /etc/resolv.conf.
     category: availability
     severity_override: error
@@ -199,7 +199,7 @@ rules:
       {{ domain }} did not answer in time, so Squid gave {{ client_ip }} a timeout error (504)
       after {{ (elapsed_ms / 1000) | round(1) }} s.
     cause: The web server or the network path to it is slow or down.
-    action: Check whether {{ domain }} is reachable from the proxy host; if many sites time out, check the proxy's internet link.
+    action: Check whether {{ domain | shquote }} is reachable from the proxy host; if many sites time out, check the proxy's internet link.
     category: availability
     severity_override: error
     examples:
@@ -226,7 +226,7 @@ rules:
       early.{% elif status == 503 %}The web server is overloaded or down for
       maintenance.{% else %}The web server hit an internal error.{% endif %}
     action: >-
-      This is a problem on {{ domain }}'s side, not the proxy's. If {{ domain }} is one of your own
+      This is a problem on {{ domain | shquote }}'s side, not the proxy's. If {{ domain | shquote }} is one of your own
       servers, check its logs.
     category: availability
     severity_override: error
@@ -423,7 +423,7 @@ rules:
     match:
       regex: "Unable to open configuration file: (?P<path>[^:]+): \\((?P<errno>\\d+)\\) (?P<reason>.+)"
     template: Squid cannot start because it cannot read its configuration file {{ path }} ({{ reason }}).
-    action: Restore {{ path }} (or reinstall the squid package's default), then check it with "squid -k parse".
+    action: Restore {{ path | shquote }} (or reinstall the squid package's default), then check it with "squid -k parse".
     category: configuration
     severity_override: critical
     examples:
@@ -441,7 +441,7 @@ rules:
       regex: (?<![^\s'])(?P<path>/[^\s:']+)'?:? \(13\) Permission denied
     template: Squid is not allowed to open {{ path }}.
     cause: The file or its directory is not owned by / writable for the user Squid runs as (cache_effective_user, usually "proxy").
-    action: "Fix ownership, e.g. chown -R proxy:proxy {{ path }}, and check AppArmor/SELinux denials for squid."
+    action: "Fix ownership, e.g. chown -R proxy:proxy {{ path | shquote }}, and check AppArmor/SELinux denials for squid."
     category: configuration
     severity_override: error
     examples:
@@ -457,7 +457,7 @@ rules:
       regex: Cannot open '(?P<path>[^']+)' for writing
     template: Squid cannot write its log file {{ path }}, so it will not start.
     cause: The log directory is not writable by the user Squid runs as (cache_effective_user).
-    action: "chown proxy:proxy {{ path }} and its directory (or the user named in squid.conf), then start Squid again."
+    action: "chown proxy:proxy {{ path | shquote }} and its directory (or the user named in squid.conf), then start Squid again."
     category: configuration
     severity_override: critical
     examples:
@@ -520,7 +520,7 @@ rules:
       regex: No (?:Address|DNS) records in response to '(?P<host>[^']+)'
     template: The DNS server said {{ host }} does not exist, so Squid could not fetch it.
     cause: A typo in the address, a site that no longer exists, or a DNS server that cannot resolve it.
-    action: Run "getent hosts {{ host }}" on the proxy host; if real sites fail too, check dns_nameservers in squid.conf.
+    action: Run "getent hosts {{ host | shquote }}" on the proxy host; if real sites fail too, check dns_nameservers in squid.conf.
     category: availability
     severity_override: warning
     examples:
@@ -552,7 +552,7 @@ rules:
       regex: Detected DEAD (?:Parent|Sibling)\s*:\s*(?P<peer>\S+)
     template: Squid marked the upstream proxy {{ peer }} as down and stopped sending requests through it.
     cause: "{{ peer }} stopped answering: it is down, overloaded, or the network to it is broken."
-    action: Check that {{ peer }} is running and reachable; requests that must go through it will fail until it is back.
+    action: Check that {{ peer | shquote }} is running and reachable; requests that must go through it will fail until it is back.
     category: availability
     severity_override: error
     examples:
@@ -583,7 +583,7 @@ rules:
     template: >-
       Squid could not open a connection to {{ peer }}{% if port %} on port {{ port }}{% endif %}.
     cause: The server or upstream proxy is down, a firewall blocks the connection, or the network path is broken.
-    action: From the proxy host, test the connection (e.g. "nc -vz {{ peer }} {{ port or 80 }}").
+    action: From the proxy host, test the connection (e.g. "nc -vz {{ peer | shquote }} {{ (port or 80) | shquote }}").
     category: availability
     severity_override: error
     examples:

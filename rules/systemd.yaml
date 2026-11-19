@@ -16,7 +16,7 @@ rules:
       regex: "^(?P<unit>\\S+): (?:Start request repeated too quickly|Failed with result 'start-limit-hit')"
     template: systemd stopped trying to start {{ unit }} because it failed too many times in a short period.
     cause: The service crashes right after starting (look at the error just before the first restart).
-    action: Fix the cause, then run "systemctl reset-failed {{ unit }}" and "systemctl start {{ unit }}".
+    action: Fix the cause, then run "systemctl reset-failed {{ unit | shquote }}" and "systemctl start {{ unit | shquote }}".
     category: availability
     severity_override: critical
     references: ["man:systemd.unit(5)"]
@@ -39,7 +39,7 @@ rules:
     match:
       regex: "^(?P<unit>\\S+): Failed with result 'exit-code'"
     template: The service {{ unit }} stopped with an error code, so systemd marked it as failed.
-    action: Run "journalctl -u {{ unit }} -n 50" to see what the program printed before it exited.
+    action: Run "journalctl -u {{ unit | shquote }} -n 50" to see what the program printed before it exited.
     category: availability
     severity_override: error
     examples:
@@ -58,7 +58,7 @@ rules:
       {{ unit }} did not finish {% if phase == "Stop" %}stopping{% else %}starting{% endif %} in time,
       so systemd gave up on it.
     cause: The program hangs (waiting for the network, a database, a lock) or simply needs longer than TimeoutStartSec.
-    action: Check "journalctl -u {{ unit }}" for what it was waiting for; raise TimeoutStartSec only if slow start-up is normal.
+    action: Check "journalctl -u {{ unit | shquote }}" for what it was waiting for; raise TimeoutStartSec only if slow start-up is normal.
     category: availability
     severity_override: error
     examples:
@@ -92,7 +92,7 @@ rules:
     match:
       regex: "^(?P<unit>\\S+): (?:A process of this unit has been killed by the OOM killer|Failed with result 'oom-kill')"
     template: The kernel killed a process of {{ unit }} because the machine (or the service's memory limit) ran out of memory.
-    action: Check memory use ("systemctl status {{ unit }}" shows it) and MemoryMax=; add RAM/swap or reduce the service's memory use.
+    action: Check memory use ("systemctl status {{ unit | shquote }}" shows it) and MemoryMax=; add RAM/swap or reduce the service's memory use.
     category: performance
     severity_override: error
     examples:
@@ -111,7 +111,7 @@ rules:
     template: >-
       {{ unit }} was ended by a signal{% if result == "core-dump" %} and crashed (core dump){% endif %},
       so systemd marked it as failed.
-    action: Run "journalctl -u {{ unit }}" for the crash details{% if result == "core-dump" %} and "coredumpctl info" for the stack trace{% endif %}.
+    action: Run "journalctl -u {{ unit | shquote }}" for the crash details{% if result == "core-dump" %} and "coredumpctl info" for the stack trace{% endif %}.
     category: availability
     severity_override: error
     examples:
@@ -131,7 +131,7 @@ rules:
       systemd could not run the program of {{ unit }}{% if path %} ({{ path }}: {{ reason }}){% endif %},
       so the service never started.
     cause: ExecStart= points to a file that does not exist, is not executable, or has a bad interpreter line.
-    action: Check ExecStart= in "systemctl cat {{ unit }}" and that the file exists and is executable.
+    action: Check ExecStart= in "systemctl cat {{ unit | shquote }}" and that the file exists and is executable.
     category: configuration
     severity_override: error
     examples:
@@ -151,7 +151,7 @@ rules:
     match:
       regex: "^(?P<unit>\\S+): Main process exited, code=exited, status=(?P<status>[1-9]\\d*)/(?P<name>\\S+)"
     template: The main program of {{ unit }} stopped with exit status {{ status }} ({{ name }}).
-    action: The program's own messages just before this line say why; see "journalctl -u {{ unit }} -n 50".
+    action: The program's own messages just before this line say why; see "journalctl -u {{ unit | shquote }} -n 50".
     category: availability
     severity_override: error
     examples:
@@ -222,7 +222,7 @@ rules:
     template: >-
       {{ unit }} stopped and systemd is restarting it automatically; this is restart number
       {{ count }}{% if count | int >= 3 %}, so it is probably crash-looping{% endif %}.
-    action: "{% if count | int >= 3 %}Find why it keeps failing: journalctl -u {{ unit }} -n 100{% endif %}"
+    action: "{% if count | int >= 3 %}Find why it keeps failing: journalctl -u {{ unit | shquote }} -n 100{% endif %}"
     category: availability
     severity_override: warning
     tags: [restart]
@@ -258,7 +258,7 @@ rules:
     match:
       regex: "^(?P<unit>\\S+): Job \\S+/(?P<job>\\w+) failed with result 'dependency'"
     template: The {{ job }} of {{ unit }} was cancelled because a unit it requires failed.
-    action: Run "systemctl list-dependencies {{ unit }}" and "systemctl --failed" to find the failed one.
+    action: Run "systemctl list-dependencies {{ unit | shquote }}" and "systemctl --failed" to find the failed one.
     category: availability
     severity_override: error
     examples:
@@ -273,7 +273,9 @@ rules:
     match:
       regex: ^Failed to start (?:(?P<unit>\S+\.(?:service|socket|mount|timer|target|path|swap)) - )?(?P<desc>.+?)\.?$
     template: systemd could not start {{ unit or desc }}{% if unit %} ({{ desc }}){% endif %}.
-    action: 'Run "systemctl status {{ unit or "<unit>" }}" and "journalctl -xeu {{ unit or "<unit>" }}" for the reason.'
+    action: >-
+      {% if unit %}Run "systemctl status {{ unit | shquote }}" and "journalctl -xeu {{ unit | shquote }}" for
+      the reason.{% else %}Run "systemctl --failed" to find the unit, then "journalctl -xeu" with its name.{% endif %}
     category: availability
     severity_override: error
     examples:
@@ -342,7 +344,7 @@ rules:
     match:
       regex: "^(?P<unit>\\S+): (?:Unit configuration has fatal error|Service has no ExecStart=)"
     template: systemd refuses to start {{ unit }} because its unit file is invalid.
-    action: Read the systemd lines just above for the exact problem, fix "systemctl edit --full {{ unit }}", then "systemctl daemon-reload".
+    action: Read the systemd lines just above for the exact problem, fix "systemctl edit --full {{ unit | shquote }}", then "systemctl daemon-reload".
     category: configuration
     severity_override: error
     examples:

@@ -22,7 +22,7 @@ rules:
     match:
       regex: ^container die \S+ (?=.*[(,] ?exitCode=0[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} stopped normally (exit code 0); its main program finished its work.
-    action: Nothing to do for one-off jobs. If {{ name }} is a long-running service, check why its program exited (docker logs {{ name }}).
+    action: Nothing to do for one-off jobs. If {{ name | shquote }} is a long-running service, check why its program exited (docker logs {{ name | shquote }}).
     category: availability
     severity_override: info
     examples:
@@ -39,7 +39,7 @@ rules:
       regex: ^container die \S+ (?=.*[(,] ?exitCode=1[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} stopped because its program reported an error (exit code 1).
     cause: An application error, such as bad configuration, a missing file or a failed connection to a database.
-    action: Read the last lines the program printed with "docker logs --tail 50 {{ name }}".
+    action: Read the last lines the program printed with "docker logs --tail 50 {{ name | shquote }}".
     category: availability
     severity_override: error
     examples:
@@ -112,7 +112,7 @@ rules:
       It ran out of memory (look for an "oom" event just before), or it was stopped and did not
       shut down within the grace period, or someone ran "docker kill".
     action: >-
-      Run "docker inspect -f '{{ '{{' }}.State.OOMKilled{{ '}}' }}' {{ name }}". If true, raise its memory
+      Run "docker inspect -f '{{ '{{' }}.State.OOMKilled{{ '}}' }}' {{ name | shquote }}". If true, raise its memory
       limit or fix the memory use; otherwise check who stopped it.
     category: availability
     severity_override: error
@@ -134,7 +134,7 @@ rules:
       regex: ^container die \S+ (?=.*[(,] ?exitCode=139[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} crashed with a segmentation fault (exit code 139); the program accessed memory it should not.
     cause: A bug in the program or a native library, or an image built for a different CPU or C library.
-    action: Check "docker logs {{ name }}" and the kernel log (segfault lines); try the image's latest version.
+    action: Check "docker logs {{ name | shquote }}" and the kernel log (segfault lines); try the image's latest version.
     category: availability
     severity_override: error
     examples:
@@ -168,7 +168,7 @@ rules:
     template: >-
       Container {{ name }} stopped with exit code {{ code }}{% if code | int > 128 %}, which means
       it was ended by signal {{ code | int - 128 }}{% endif %}.
-    action: The program decides what its exit codes mean; check "docker logs --tail 50 {{ name }}".
+    action: The program decides what its exit codes mean; check "docker logs --tail 50 {{ name | shquote }}".
     category: availability
     severity_override: warning
     confidence: 0.7
@@ -187,7 +187,7 @@ rules:
     match:
       regex: ^container oom \S+ (?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} hit its memory limit and the kernel killed a process inside it.
-    action: Raise its memory limit (mem_limit / --memory) or find what uses the memory ("docker stats {{ name }}").
+    action: Raise its memory limit (mem_limit / --memory) or find what uses the memory ("docker stats {{ name | shquote }}").
     category: performance
     severity_override: error
     examples:
@@ -219,7 +219,7 @@ rules:
       regex: "\\bcontainer health_status: unhealthy \\S+ (?=.*[(,] ?name=(?P<name>[^,)]+))"
     template: Container {{ name }} is running but failed its health check several times in a row.
     cause: The service inside is stuck, overloaded, or still starting; or the health check command itself is wrong.
-    action: "See the last check results: docker inspect --format '{{ '{{' }}json .State.Health{{ '}}' }}' {{ name }}"
+    action: "See the last check results: docker inspect --format '{{ '{{' }}json .State.Health{{ '}}' }}' {{ name | shquote }}"
     category: availability
     severity_override: error
     examples:
@@ -236,7 +236,7 @@ rules:
       fields: {event: container_oom}
     extract: [container_id]
     template: Container {{ container_id[:12] }} hit its memory limit and the kernel killed a process inside it.
-    action: Find the container with "docker ps -a --filter id={{ container_id[:12] }}" and raise its memory limit or reduce its memory use.
+    action: Find the container with "docker ps -a --filter id={{ container_id[:12] | shquote }}" and raise its memory limit or reduce its memory use.
     category: performance
     severity_override: error
     examples:
@@ -273,7 +273,7 @@ rules:
       regex: 'exec: "(?P<cmd>[^"]+)": executable file not found'
     extract: [container_id]
     template: The health check of container {{ container_id[:12] }} runs "{{ cmd }}", but the image does not contain that program, so every check fails.
-    action: Install {{ cmd }} in the image, or change the HEALTHCHECK to a command the image has (e.g. wget, or a script).
+    action: Install {{ cmd | shquote }} in the image, or change the HEALTHCHECK to a command the image has (e.g. wget, or a script).
     category: configuration
     severity_override: error
     examples:
@@ -292,7 +292,7 @@ rules:
     extract: [container_id, error]
     template: "Docker could not run the health check of container {{ container_id[:12] }}: {{ error }}."
     cause: The check took longer than its timeout, or the container is too busy or broken to execute it.
-    action: Check the container ("docker logs {{ container_id[:12] }}") and the HEALTHCHECK timeout.
+    action: Check the container ("docker logs {{ container_id[:12] | shquote }}") and the HEALTHCHECK timeout.
     category: availability
     severity_override: warning
     examples:
@@ -307,7 +307,7 @@ rules:
     match:
       regex: Container (?P<id>\S+) is restarting, wait until the container is running
     template: Container {{ id }} is stuck in a restart loop; it crashes right after starting and Docker keeps restarting it.
-    action: Read why it crashes ("docker logs --tail 50 {{ id }}"); stop the loop with "docker update --restart=no {{ id }}" while you fix it.
+    action: Read why it crashes ("docker logs --tail 50 {{ id | shquote }}"); stop the loop with "docker update --restart=no {{ id | shquote }}" while you fix it.
     category: availability
     severity_override: error
     examples:
@@ -398,7 +398,7 @@ rules:
       regex: 'Get "https://(?P<host>[^/"]+)/v2/[^"]*": (?P<reason>(?:dial tcp|net/http)[^"]*?(?:no such host|i/o timeout|TLS handshake timeout|connection refused|request canceled[^"]*))'
     template: Docker could not reach the image registry {{ host }} ({{ reason }}).
     cause: No internet or DNS on this host, a firewall, or Docker not using the required HTTP proxy.
-    action: Test "curl -I https://{{ host }}/v2/". If you need a proxy, configure it for the Docker daemon (systemd drop-in with HTTPS_PROXY).
+    action: Test "curl -I https://{{ host | shquote }}/v2/". If you need a proxy, configure it for the Docker daemon (systemd drop-in with HTTPS_PROXY).
     category: availability
     severity_override: error
     examples:
@@ -416,7 +416,7 @@ rules:
     match:
       regex: Bind for (?P<address>\S+?):(?P<port>\d+) failed:? port is already allocated
     template: A container could not start because port {{ port }} on {{ address }} is already used by another container.
-    action: Find the other one with "docker ps --filter publish={{ port }}", then stop it or map this container to a different host port.
+    action: Find the other one with "docker ps --filter publish={{ port | shquote }}", then stop it or map this container to a different host port.
     category: configuration
     severity_override: error
     examples:
@@ -431,7 +431,7 @@ rules:
     match:
       regex: 'listen tcp\d? (?P<address>\S+?):(?P<port>\d+): bind:? address already in use'
     template: A container could not publish port {{ port }} because a program outside Docker already listens on it.
-    action: "Find it with: sudo ss -ltnp 'sport = :{{ port }}' then stop it or choose another host port."
+    action: "Find it with: sudo ss -ltnp | grep :{{ port | shquote }} then stop it or choose another host port."
     category: configuration
     severity_override: error
     examples:
@@ -446,7 +446,7 @@ rules:
     match:
       regex: network (?P<network>\S+) not found
     template: A container refers to the Docker network {{ network }}, which does not exist (any more).
-    action: Create it ("docker network create {{ network }}") or recreate the containers so they use the current network.
+    action: Create it ("docker network create {{ network | shquote }}") or recreate the containers so they use the current network.
     category: configuration
     severity_override: error
     examples:
@@ -478,7 +478,7 @@ rules:
     match:
       regex: bind source path does not exist:\s*(?P<path>\S+)
     template: A container could not start because the host folder {{ path }} it should mount does not exist.
-    action: Create {{ path }} on the host (or fix the path in the compose file / -v option).
+    action: Create {{ path | shquote }} on the host (or fix the path in the compose file / -v option).
     category: configuration
     severity_override: error
     examples:
@@ -493,7 +493,7 @@ rules:
     match:
       regex: 'remove (?P<volume>\S+): volume is in use'
     template: The volume {{ volume }} cannot be deleted because a container (running or stopped) still uses it.
-    action: Remove that container first ("docker ps -a --filter volume={{ volume }}"), then the volume.
+    action: Remove that container first ("docker ps -a --filter volume={{ volume | shquote }}"), then the volume.
     category: configuration
     severity_override: warning
     examples:
@@ -544,7 +544,7 @@ rules:
     match:
       regex: pid file found, ensure docker is not running or delete (?P<path>\S+)
     template: The Docker daemon refused to start because {{ path }} says another dockerd is already running.
-    action: If "pgrep dockerd" finds nothing, the file is stale; delete {{ path }} and start docker again.
+    action: If "pgrep dockerd" finds nothing, the file is stale; delete {{ path | shquote }} and start docker again.
     category: availability
     severity_override: critical
     examples:

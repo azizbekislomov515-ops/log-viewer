@@ -17,7 +17,7 @@ rules:
     template: >-
       The kernel killed {{ process }} (PID {{ pid }}) because the container or service it runs in
       used up its own memory limit; the machine itself still had memory.
-    action: Raise the memory limit of that container/service (docker --memory, MemoryMax=) or reduce what {{ process }} uses.
+    action: Raise the memory limit of that container/service (docker --memory, MemoryMax=) or reduce what {{ process | shquote }} uses.
     category: performance
     severity_override: error
     examples:
@@ -37,7 +37,7 @@ rules:
       The machine ran out of memory, so the kernel killed {{ process }} (PID
       {{ pid }}){% if rss_kb %}, which was using {{ (rss_kb | int * 1024) | filesizeformat }}{% endif %},
       to keep the system running.
-    action: Find what used the memory (often {{ process }} itself); add RAM or swap, or limit that program's memory.
+    action: Find what used the memory (often {{ process | shquote }} itself); add RAM or swap, or limit that program's memory.
     category: availability
     severity_override: critical
     references: ["https://www.kernel.org/doc/gorman/html/understand/understand016.html"]
@@ -76,7 +76,7 @@ rules:
       {{ process }} (PID {{ pid }}) crashed because it accessed memory it should not (segmentation
       fault){% if lib %} inside {{ lib }}{% endif %}.
     cause: A bug in the program or a library; repeated crashes in different programs can also mean faulty RAM.
-    action: Update the package that provides {{ process }}; if many different programs segfault, test the RAM (memtest86+).
+    action: Update the package that provides {{ process | shquote }}; if many different programs segfault, test the RAM (memtest86+).
     category: availability
     severity_override: error
     examples:
@@ -94,7 +94,7 @@ rules:
       regex: 'traps: (?P<process>[^\s\[]+)\[(?P<pid>\d+)\] (?P<kind>general protection fault|trap invalid opcode|trap divide error)'
     template: "{{ process }} (PID {{ pid }}) was stopped by the kernel after a {{ kind }}."
     cause: A program bug, or a binary built for a newer CPU than this one (invalid opcode).
-    action: Update {{ process }}; for "invalid opcode", check that the program supports this CPU.
+    action: Update {{ process | shquote }}; for "invalid opcode", check that the program supports this CPU.
     category: availability
     severity_override: error
     examples:
@@ -145,7 +145,7 @@ rules:
       regex: I/O error, dev (?P<device>\w+), sector (?P<sector>\d+)
     template: The kernel failed to read from or write to disk {{ device }} (sector {{ sector }}). Data in that area may be lost.
     cause: A failing disk, a bad cable or connector, or a disconnected USB/virtual disk.
-    action: Check the disk's health ("sudo smartctl -a /dev/{{ device }}") and back up important data now.
+    action: Check the disk's health ("sudo smartctl -a /dev/{{ device | shquote }}") and back up important data now.
     category: availability
     severity_override: critical
     examples:
@@ -179,7 +179,7 @@ rules:
     match:
       regex: '(?:EXT4-fs|EXT3-fs|BTRFS|XFS) (?:\w+ )?\(?(?:device )?(?P<device>[\w./-]+)\)?:? .*?(?:Remounting filesystem read-only|forced to read-only|shutting down filesystem)'
     template: The filesystem on {{ device }} hit an error and was made read-only to protect the data; programs can no longer write there.
-    action: Back up what you can, then run a filesystem check (fsck) on {{ device }} from a rescue boot, and check the disk's health.
+    action: Back up what you can, then run a filesystem check (fsck) on {{ device | shquote }} from a rescue boot, and check the disk's health.
     category: availability
     severity_override: critical
     examples:
@@ -197,7 +197,7 @@ rules:
       regex: '(?:EXT4-fs error \(device (?P<device>[^)]+)\)|XFS \((?P<xfs>[^)]+)\): (?:Corruption|metadata I/O error))'
     template: The kernel found damaged data structures on the filesystem {{ device or xfs }}.
     cause: An unclean shutdown, a failing disk, or (rarely) a kernel bug.
-    action: Check the disk's health and schedule a filesystem check (fsck / xfs_repair) on {{ device or xfs }} while it is unmounted.
+    action: Check the disk's health and schedule a filesystem check (fsck / xfs_repair) on {{ (device or xfs) | shquote }} while it is unmounted.
     category: availability
     severity_override: error
     examples:
@@ -216,7 +216,7 @@ rules:
       The firewall (UFW) blocked a {{ proto }} connection from {{ src }} to {{ dst }}{% if dpt %} port
       {{ dpt }}{% endif %}{% if iface %} on {{ iface }}{% endif %}.
     cause: Usually internet scanners knocking on closed ports; nothing got through.
-    action: Nothing to do unless {{ src }} is one of your own machines that should be allowed; then add a "ufw allow" rule.
+    action: Nothing to do unless {{ src | shquote }} is one of your own machines that should be allowed; then add a "ufw allow" rule.
     category: security
     severity_override: info
     examples:
@@ -234,7 +234,7 @@ rules:
     template: >-
       A firewall rule ({{ prefix | trim }}) dropped a {{ proto }} packet from {{ src }} to
       {{ dst }}{% if dpt %} port {{ dpt }}{% endif %}.
-    action: Nothing to do if this traffic should be blocked; otherwise adjust the iptables/nftables rule that logs "{{ prefix | trim }}".
+    action: Nothing to do if this traffic should be blocked; otherwise adjust the iptables/nftables rule that logs "{{ prefix | trim | shquote }}".
     category: security
     severity_override: info
     examples:

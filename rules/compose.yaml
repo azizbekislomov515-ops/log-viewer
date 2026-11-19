@@ -61,7 +61,7 @@ rules:
       regex: dependency failed to start:\s*container (?P<container>\S+) is unhealthy
     template: Compose did not start the services that depend on {{ container }}, because {{ container }} never passed its health check.
     cause: The service in {{ container }} is failing or slow to start, or its healthcheck test or timing is wrong.
-    action: Check "docker compose logs {{ container }}" and its healthcheck (test, interval, retries, start_period).
+    action: Check "docker compose logs {{ container | shquote }}" and its healthcheck (test, interval, retries, start_period).
     category: availability
     severity_override: error
     examples:
@@ -78,7 +78,7 @@ rules:
     match:
       regex: dependency failed to start:\s*container (?P<container>\S+) exited \((?P<code>\d+)\)
     template: Compose did not start the services that depend on {{ container }}, because {{ container }} stopped with exit code {{ code }}.
-    action: See why it failed with "docker compose logs {{ container }}".
+    action: See why it failed with "docker compose logs {{ container | shquote }}".
     category: availability
     severity_override: error
     examples:
@@ -98,7 +98,7 @@ rules:
       The container {{ container }} stopped with exit code {{ code }}{% if code == "0" %} (finished
       normally){% elif code == "137" %} (killed, often out of memory){% elif code == "143" %}
       (asked to stop){% else %} (an error){% endif %}.
-    action: "{% if code != '0' and code != '143' %}Check its last output: docker compose logs --tail 50 {{ container }}{% endif %}"
+    action: "{% if code != '0' and code != '143' %}Check its last output: docker compose logs --tail 50 {{ container | shquote }}{% endif %}"
     category: availability
     severity_override: warning
     examples:
@@ -118,7 +118,7 @@ rules:
     match:
       regex: endpoint (?P<container>\S+) .*Bind for (?P<address>\S+?):(?P<port>\d+) failed:? port is already allocated
     template: "{{ container }} could not start because host port {{ port }} is already published by another container."
-    action: Find it with "docker ps --filter publish={{ port }}", stop it, or change the left side of "{{ port }}:..." under ports in the compose file.
+    action: Find it with "docker ps --filter publish={{ port | shquote }}", stop it, or change the left side of "{{ port | shquote }}:..." under ports in the compose file.
     category: configuration
     severity_override: error
     examples:
@@ -133,7 +133,7 @@ rules:
     match:
       regex: 'endpoint (?P<container>\S+) .*listen tcp\d? (?P<address>\S+?):(?P<port>\d+): bind:? address already in use'
     template: "{{ container }} could not start because a program on the host (not a container) already listens on port {{ port }}."
-    action: "Find it with: sudo ss -ltnp 'sport = :{{ port }}' then stop it or change the host port in the compose file."
+    action: "Find it with: sudo ss -ltnp | grep :{{ port | shquote }} then stop it or change the host port in the compose file."
     category: configuration
     severity_override: error
     examples:
@@ -150,7 +150,7 @@ rules:
     match:
       regex: The container name "/?(?P<name>[^"]+)" is already in use by container "(?P<other>[0-9a-f]+)"
     template: Compose could not create {{ name }} because a container with that name already exists (ID {{ other[:12] }}), probably from an earlier run or another project.
-    action: Remove the old one ("docker rm -f {{ name }}") or give this project a different name (-p / name:).
+    action: Remove the old one ("docker rm -f {{ name | shquote }}") or give this project a different name (-p / name:).
     category: configuration
     severity_override: error
     examples:
@@ -187,7 +187,7 @@ rules:
     template: >-
       Compose stopped because the variable {{ var }} has no value, and the compose file says it is
       required{% if hint %} ("{{ hint }}"){% endif %}.
-    action: Set {{ var }} in the .env file next to the compose file, or export it before running docker compose.
+    action: Set {{ var | shquote }} in the .env file next to the compose file, or export it before running docker compose.
     category: configuration
     severity_override: error
     examples:
@@ -205,7 +205,7 @@ rules:
       regex: The "(?P<var>\w+)" variable is not set\. Defaulting to a blank string
     template: The compose file uses ${{ '{' }}{{ var }}{{ '}' }}, but {{ var }} is not set, so an empty value was used instead.
     cause: A missing or misnamed .env file, or the variable was never exported.
-    action: Add {{ var }}=... to the .env file in the project directory; an empty value can break passwords, ports or image tags.
+    action: Add {{ var | shquote }}=... to the .env file in the project directory; an empty value can break passwords, ports or image tags.
     category: configuration
     severity_override: warning
     examples:
@@ -223,7 +223,7 @@ rules:
     match:
       regex: (?<!\S)(?P<file>\S+?):? the attribute `version` is obsolete
     template: The compose file {{ file }} has a "version:" line, which current Compose ignores. Harmless.
-    action: Delete the "version:" line from {{ file }} to silence this warning.
+    action: Delete the "version:" line from {{ file | shquote }} to silence this warning.
     category: configuration
     severity_override: info
     examples:
@@ -256,7 +256,7 @@ rules:
       regex: 'yaml: line (?P<line>\d+): (?P<problem>.+)'
     template: "The compose file is not valid YAML at line {{ line }}: {{ problem }}."
     cause: Usually wrong indentation, a tab character, or a value with ":" that needs quotes.
-    action: Fix line {{ line }} (and the line above it), then check with "docker compose config".
+    action: Fix line {{ line | shquote }} (and the line above it), then check with "docker compose config".
     category: configuration
     severity_override: error
     examples:
@@ -271,7 +271,7 @@ rules:
     match:
       regex: 'validating (?P<file>\S+?):\s*(?P<where>\S+) (?P<problem>.+)'
     template: "{{ file }} has an invalid value at {{ where }}: it {{ problem }}."
-    action: Fix {{ where }} in {{ file }}; "docker compose config" shows the parsed result.
+    action: Fix {{ where | shquote }} in {{ file | shquote }}; "docker compose config" shows the parsed result.
     category: configuration
     severity_override: error
     examples:
@@ -286,7 +286,7 @@ rules:
     match:
       regex: service "(?P<service>[^"]+)" depends on undefined service "?(?P<dependency>[^":]+)"?
     template: The service {{ service }} lists {{ dependency }} under depends_on, but there is no service called {{ dependency }}.
-    action: Fix the name under depends_on of {{ service }} (check spelling), or add the {{ dependency }} service.
+    action: Fix the name under depends_on of {{ service | shquote }} (check spelling), or add the {{ dependency | shquote }} service.
     category: configuration
     severity_override: error
     examples:
@@ -365,7 +365,7 @@ rules:
       regex: network (?P<network>\S+) was found but has incorrect label
     template: The network {{ network }} already exists but was not created by this Compose project, so Compose will not use it.
     action: >-
-      If nothing else uses it, remove it ("docker network rm {{ network }}"); otherwise mark it "external: true" in the compose file.
+      If nothing else uses it, remove it ("docker network rm {{ network | shquote }}"); otherwise mark it "external: true" in the compose file.
     category: configuration
     severity_override: error
     examples:

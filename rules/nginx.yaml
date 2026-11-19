@@ -27,7 +27,7 @@ rules:
     template: "{{ client_ip }} successfully downloaded {{ path }}, a file that usually contains passwords or source code."
     action: >-
       Block access to hidden files now (location ~ /\. { deny all; }), and treat every secret in
-      {{ path }} as leaked: change those passwords and keys.
+      {{ path | shquote }} as leaked: change those passwords and keys.
     category: security
     severity_override: critical
     examples:
@@ -231,7 +231,7 @@ rules:
       fields: {status: 401}
     extract: [client_ip, method, path]
     template: "{{ client_ip }} was refused {{ method }} {{ path }} because it is not logged in or its credentials were wrong (401)."
-    action: One 401 is normal; many from {{ client_ip }} in a short time suggest password guessing.
+    action: One 401 is normal; many from {{ client_ip | shquote }} in a short time suggest password guessing.
     category: security
     severity_override: notice
     examples:
@@ -301,7 +301,7 @@ rules:
     optional: [client_ip]
     template: nginx tried to pass a request to the backend {{ upstream }}, but nothing is listening there (connection refused).
     cause: The backend application is stopped, crashed, or listens on a different port.
-    action: Start or fix the backend, then check it answers locally (e.g. curl {{ upstream }}).
+    action: Start or fix the backend, then check it answers locally (e.g. curl {{ upstream | shquote }}).
     category: availability
     severity_override: error
     examples:
@@ -403,7 +403,7 @@ rules:
       regex: '"(?P<file>/[^"]+)" failed \(13:\s*Permission denied\)'
     template: nginx is not allowed to read {{ file }}, so visitors get an error.
     cause: The file or one of its parent directories is not readable by the nginx worker user (www-data / nginx), or SELinux blocks it.
-    action: Check with "namei -l {{ file }}" and fix permissions (directories need x, files need r for the nginx user).
+    action: Check with "namei -l {{ file | shquote }}" and fix permissions (directories need x, files need r for the nginx user).
     category: configuration
     severity_override: error
     examples:
@@ -540,7 +540,7 @@ rules:
     match:
       regex: bind\(\) to (?P<address>\S+?:(?P<port>\d+)) failed \(98:\s*Address already in use\)
     template: nginx cannot listen on {{ address }} because another program already uses that port, so it cannot start.
-    action: "Find the program with: sudo ss -ltnp | grep ':{{ port }}' (often another nginx, Apache, or a container)."
+    action: "Find the program with: sudo ss -ltnp | grep :{{ port | shquote }} (often another nginx, Apache, or a container)."
     category: availability
     severity_override: critical
     examples:
@@ -548,7 +548,7 @@ rules:
         source: file:/var/log/nginx/error.log
         expect:
           text: nginx cannot listen on 0.0.0.0:80 because another program already uses that port, so it cannot start.
-          action: "Find the program with: sudo ss -ltnp | grep ':80' (often another nginx, Apache, or a container)."
+          action: "Find the program with: sudo ss -ltnp | grep :80 (often another nginx, Apache, or a container)."
     counter_examples:
       - line: "2026/11/17 22:50:07 [emerg] 1#1: still could not bind()"
         source: file:/var/log/nginx/error.log
@@ -577,7 +577,7 @@ rules:
     match:
       regex: ^(?P<problem>.+?) in (?P<file>/\S+?):(?P<line>\d+)\s*$
     template: "nginx rejected its configuration: {{ problem }} ({{ file }}, line {{ line }}). It keeps running with the old settings or will not start."
-    action: Fix line {{ line }} of {{ file }}, then run "sudo nginx -t" before reloading.
+    action: Fix line {{ line | shquote }} of {{ file | shquote }}, then run "sudo nginx -t" before reloading.
     category: configuration
     severity_override: critical
     examples:

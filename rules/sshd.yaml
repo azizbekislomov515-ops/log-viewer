@@ -37,7 +37,7 @@ rules:
       fields: {event: accepted, auth_method: [password, keyboard-interactive/pam]}
     extract: [user, src_ip]
     template: "{{ user }} logged in over SSH from {{ src_ip }} with a password."
-    action: If {{ src_ip }} is unfamiliar, check who used the {{ user }} account; consider SSH keys instead of passwords.
+    action: If {{ src_ip | shquote }} is unfamiliar, check who used the {{ user | shquote }} account; consider SSH keys instead of passwords.
     category: security
     severity_override: notice
     examples:
@@ -77,7 +77,7 @@ rules:
       {{ src_ip }} tried to log in as "{{ user }}", a user that does not exist on this machine,
       and failed.
     cause: Almost always an automated scanner guessing common user names.
-    action: If {{ src_ip }} keeps trying, block it (fail2ban or a firewall rule) and allow SSH only with keys.
+    action: If {{ src_ip | shquote }} keeps trying, block it (fail2ban or a firewall rule) and allow SSH only with keys.
     category: security
     severity_override: warning
     examples:
@@ -96,7 +96,7 @@ rules:
     extract: [src_ip, auth_method]
     template: "{{ src_ip }} tried to log in as root with a wrong {{ auth_method }}."
     cause: Usually password guessing by a bot; root is the most attacked account.
-    action: Disable root logins ("PermitRootLogin no") and block {{ src_ip }} if it repeats.
+    action: Disable root logins ("PermitRootLogin no") and block {{ src_ip | shquote }} if it repeats.
     category: security
     severity_override: warning
     examples:
@@ -129,7 +129,7 @@ rules:
       fields: {event: failed}
     extract: [user, src_ip, auth_method]
     template: "{{ src_ip }} failed to log in as {{ user }} ({{ auth_method }} was wrong)."
-    action: A single failure is usually a typo. Many failures from {{ src_ip }} mean someone is guessing the password.
+    action: A single failure is usually a typo. Many failures from {{ src_ip | shquote }} mean someone is guessing the password.
     category: security
     severity_override: warning
     examples:
@@ -163,7 +163,7 @@ rules:
     extract: [user, src_ip]
     template: sshd cut off {{ src_ip }} after too many failed attempts to log in as {{ user }} on one connection.
     cause: Password guessing (brute force), or a client offering many keys from its agent.
-    action: Block {{ src_ip }} if it is not yours (fail2ban does this automatically).
+    action: Block {{ src_ip | shquote }} if it is not yours (fail2ban does this automatically).
     category: security
     severity_override: warning
     examples:
@@ -378,7 +378,7 @@ rules:
     match:
       regex: '(?<!\S)(?P<file>/\S+) line (?P<line>\d+): (?P<problem>.+)'
     template: "sshd found a problem in {{ file }} at line {{ line }}: {{ problem }}."
-    action: Fix line {{ line }}, then check the whole file with "sudo sshd -t" before restarting ssh.
+    action: Fix line {{ line | shquote }}, then check the whole file with "sudo sshd -t" before restarting ssh.
     category: configuration
     severity_override: error
     examples:
