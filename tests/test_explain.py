@@ -3,6 +3,7 @@
 
 import logging
 import textwrap
+import time
 from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
@@ -12,6 +13,8 @@ import pytest
 from loglens.cli import cmd_explain, cmd_rules_lint, cmd_rules_test, main
 from loglens.core.models import Category, LogEntry, LogSource, Severity, SourceKind
 from loglens.explain import DEFAULT_RULES_DIR, ExplanationEngine, load_rules
+from loglens.explain import engine as engine_module
+from loglens.explain.engine import RULE_COOLDOWN_S
 from loglens.explain.examples import parse_line, run_examples
 
 FIXTURES = Path(__file__).parent / "fixtures" / "logs"
@@ -350,12 +353,14 @@ def test_sandbox_and_render_errors_mean_no_explanation(
     [
         ("{{ message.__class__.__mro__ }}", "'Getattr' is not allowed"),
         ("{{ message.upper() }}", "is not allowed"),
-        ("{% for i in range(100000) %}{% for j in range(100000) %}x{% endfor %}{% endfor %}",
-         "'For' is not allowed"),
+        (
+            "{% for i in range(100000) %}{% for j in range(100000) %}x{% endfor %}{% endfor %}",
+            "'For' is not allowed",
+        ),
         ("{{ 2 ** 999999 }}", "'Pow' is not allowed"),
         ("{{ message | center(999999999) }}", "filter 'center' is not allowed"),
         ("{% set x = 1 %}{{ x }}", "'Assign' is not allowed"),
-        ("{{ message | truncate(99999999) }}", "filter argument too large"),
+        ("{{ message | round(99999999) }}", "filter argument too large"),
     ],
 )
 def test_hostile_rule_templates_are_rejected_at_load(
@@ -366,19 +371,38 @@ def test_hostile_rule_templates_are_rejected_at_load(
     assert problem in issue.message
 
 
-def test_template_repetition_is_capped(tmp_path: Path) -> None:
-    engine = engine_for(tmp_path, rule("rep", "{regex: rep}", "{{ 'x' * 100000000 }}"))
-    assert engine.explain(entry("rep")) is None  # SecurityError at render: no huge string
-
-
-def test_user_pack_regex_times_out_and_is_disabled(tmp_path: Path) -> None:
+def test_user_pack_regex_times_out_and_is_suspended_not_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     engine = engine_for(tmp_path, rule("slow", "{regex: '(a|aa)+$'}", "slow"))
     assert engine.rules[0].timeout is not None  # not a built-in pack: timed regex
     hostile = entry("a" * 40 + "!")
-    for _ in range(4):
+    for _ in range(3):
         assert engine.explain(hostile) is None
-    assert "demo.slow" in engine._disabled
-    assert engine.explain(entry("aaaa")) is None  # disabled: not even tried
+    assert engine.suspended_rules() == ["demo.slow"]
+    clock = time.monotonic() + RULE_COOLDOWN_S + 1  # log text cannot switch it off for good
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock)
+    assert engine.suspended_rules() == []
+    assert engine.explain(entry("aaaa")) is not None
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{ [1, 2] * 100000000 }}",
+        "{{ 'x' * 100000000 }}",
+        "{{ 100000000 * 'x' }}",
+    ],
+)
+def test_repetition_cannot_build_huge_values(tmp_path: Path, template: str) -> None:
+    engine = engine_for(tmp_path, rule("rep", "{regex: rep}", template))
+    assert engine.explain(entry("rep")) is None
+
+
+def test_size_multiplying_filters_are_not_allowed(tmp_path: Path) -> None:
+    write_pack(tmp_path, HEADER + rule("r", "{regex: x}", "{{ message | replace('a', 'bbbb') }}"))
+    (issue,) = load_rules(tmp_path).issues
+    assert "filter 'replace' is not allowed" in issue.message
 
 
 # ---------------------------------------------------------------- example runner

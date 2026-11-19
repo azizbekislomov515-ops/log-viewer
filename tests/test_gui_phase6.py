@@ -119,6 +119,9 @@ class StubBackend(QObject):
     def unfollow(self, source_id: str) -> None: ...
     def refresh_discovery(self) -> None: ...
 
+    def clear_secrets(self) -> None:
+        self.secrets_cleared = True
+
     def take_entries(self, limit: int = 0) -> list[LogEntry]:
         out, self.queue = self.queue, []
         return out

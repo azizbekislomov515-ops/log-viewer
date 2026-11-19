@@ -8,7 +8,8 @@ cached, so a line only walks rules that can apply to it.
 from __future__ import annotations
 
 import logging
-from collections import Counter
+import time
+from collections import defaultdict, deque
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
@@ -20,6 +21,9 @@ log = logging.getLogger(__name__)
 
 #: A rule whose regex times out this many times is disabled for the session.
 MAX_RULE_TIMEOUTS = 3
+#: ...within this many seconds suspends the rule for the same time. Never permanent:
+#: log text must not be able to switch a detection off for good.
+RULE_COOLDOWN_S = 60.0
 
 
 class ExplanationEngine:
@@ -34,9 +38,10 @@ class ExplanationEngine:
         ] = {}
         self._sources: dict[str, LogSource] = {}
         self._broken: set[str] = set()
-        self._timeouts: Counter[str] = Counter()
-        #: Rules switched off because their regex kept timing out (hostile or broken pack).
-        self._disabled: set[str] = set()
+        #: Recent timeout times per rule, and rules suspended until a monotonic time
+        #: (their regex kept timing out: a broken pack, or lines crafted to be slow).
+        self._timeouts: dict[str, deque[float]] = defaultdict(deque)
+        self._suspended: dict[str, float] = {}
 
     @classmethod
     def from_directory(
@@ -67,6 +72,34 @@ class ExplanationEngine:
         """All active rules in evaluation order."""
         return self._rules
 
+    def suspended_rules(self) -> list[str]:
+        """Rules currently suspended because their regex kept timing out."""
+        return [r for r in list(self._suspended) if self._is_suspended(r)]
+
+    def _is_suspended(self, rule_id: str) -> bool:
+        until = self._suspended.get(rule_id)
+        if until is None:
+            return False
+        if time.monotonic() < until:
+            return True
+        del self._suspended[rule_id]
+        return False
+
+    def _timed_out(self, rule_id: str) -> None:
+        now = time.monotonic()
+        recent = self._timeouts[rule_id]
+        recent.append(now)
+        while recent and recent[0] < now - RULE_COOLDOWN_S:
+            recent.popleft()
+        if len(recent) >= MAX_RULE_TIMEOUTS:
+            recent.clear()
+            self._suspended[rule_id] = now + RULE_COOLDOWN_S
+            log.warning(
+                "rule suspended for %.0f s: its regex keeps timing out",
+                RULE_COOLDOWN_S,
+                extra={"rule": rule_id},
+            )
+
     def explain(self, entry: LogEntry, source: LogSource | None = None) -> Explanation | None:
         """Explain ``entry`` with the first matching rule, or None if no rule matches.
 
@@ -91,18 +124,13 @@ class ExplanationEngine:
         if candidates is None:
             candidates = cached[1][key] = self._select(source, *key)
         for rule in candidates:
-            if rule.id in self._disabled:
+            if self._suspended and self._is_suspended(rule.id):
                 continue
             try:
                 explanation = rule.apply(entry, source.display_name)
             except RuleTimeoutError:
-                self._timeouts[rule.id] += 1
-                if self._timeouts[rule.id] >= MAX_RULE_TIMEOUTS:
-                    self._disabled.add(rule.id)
-                    log.warning(
-                        "rule disabled: its regex keeps timing out", extra={"rule": rule.id}
-                    )
-                continue
+                self._timed_out(rule.id)
+                continue  # this line: the next rule may still explain it
             except Exception:  # a template bug must not cost the line its display
                 if rule.id not in self._broken:
                     self._broken.add(rule.id)

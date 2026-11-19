@@ -21,6 +21,7 @@ import math
 import os
 import re
 import secrets as _secrets
+import threading
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -142,29 +143,40 @@ class SecretVault:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        key_file = directory / "vault.key"
-        if not key_file.exists():
-            _write_private(key_file, _secrets.token_hex(32))
-        self._key = bytes.fromhex(key_file.read_text().strip())
+        self._key_file = directory / "vault.key"
         self._file = directory / "vault.json"
+        self._lock = threading.Lock()
+        if not self._key_file.exists():
+            _write_private(self._key_file, _secrets.token_hex(32))
+        self._key = bytes.fromhex(self._key_file.read_text().strip())
         self._items: dict[str, str] = (
             json.loads(self._file.read_text()) if self._file.exists() else {}
         )
 
     def keep(self, secret: str) -> str:
         """Remember ``secret``; returns its token (stable for the same secret)."""
-        token = hmac.new(self._key, secret.encode(), hashlib.sha256).hexdigest()[:12]
-        if token not in self._items:
-            self._items[token] = secret
-            _write_private(self._file, json.dumps(self._items))
-        return token
+        with self._lock:
+            token = hmac.new(self._key, secret.encode(), hashlib.sha256).hexdigest()[:12]
+            if token not in self._items:
+                self._items[token] = secret
+                _write_private(self._file, json.dumps(self._items))
+            return token
+
+    def clear(self) -> None:
+        """Forget every kept secret, in memory and on disk, and rotate the key (old
+        tokens can no longer be resolved)."""
+        with self._lock:
+            self._items = {}
+            self._file.unlink(missing_ok=True)
+            self._key = bytes.fromhex(_secrets.token_hex(32))
+            _write_private(self._key_file, self._key.hex())
 
     def reveal(self, text: str) -> str:
         """Put kept secrets back into ``text`` (explicit, local, user action only)."""
+        with self._lock:
+            items = dict(self._items)
         return re.sub(
-            r"\[REDACTED:[a-z_]+:(?P<t>[0-9a-f]{12})\]",
-            lambda m: self._items.get(m["t"], m[0]),
-            text,
+            r"\[REDACTED:[a-z_]+:(?P<t>[0-9a-f]{12})\]", lambda m: items.get(m["t"], m[0]), text
         )
 
 

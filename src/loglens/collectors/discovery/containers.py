@@ -25,6 +25,7 @@ from loglens.core.models import (
     SourceKind,
     SourceStatus,
 )
+from loglens.security.privileges import DOCKER_ROOT_WARNING
 
 log = logging.getLogger(__name__)
 
@@ -252,7 +253,7 @@ def _classify_failure(error_text: str, *, cli_missing: bool) -> DiscoveryIssue:
             "Docker socket not accessible: permission denied.",
             Severity.WARNING,
             "Add your user to the 'docker' group (sudo usermod -aG docker $USER), then log out "
-            "and back in. Note: docker group membership is equivalent to root access.",
+            "and back in. " + DOCKER_ROOT_WARNING,
         )
     if cli_missing:  # SDK could not connect and there is no docker binary either
         return DiscoveryIssue(

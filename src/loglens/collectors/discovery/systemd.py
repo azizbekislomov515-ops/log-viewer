@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from fnmatch import fnmatchcase
 
 from loglens.collectors.discovery.base import (
@@ -22,6 +22,7 @@ from loglens.core.models import (
     SourceKind,
     SourceStatus,
 )
+from loglens.security.privileges import journal_access_issue
 
 log = logging.getLogger(__name__)
 
@@ -62,8 +63,10 @@ class SystemdDiscoverer:
         *,
         exclude: Sequence[str] = DEFAULT_EXCLUDES,
         include_not_found: bool = False,
+        journal_check: Callable[[], DiscoveryIssue | None] = journal_access_issue,
     ) -> None:
         self._run = runner
+        self._journal_check = journal_check
         self._exclude = tuple(exclude)
         self._include_not_found = include_not_found
 
@@ -105,7 +108,8 @@ class SystemdDiscoverer:
             if self._keep(u)
         )
         group = ServiceGroup(GROUP_ID, "System services", GroupKind.SYSTEM, sources)
-        return DiscoveryResult(groups=(group,))
+        issue = self._journal_check()
+        return DiscoveryResult(groups=(group,), issues=(issue,) if issue else ())
 
     def _keep(self, unit: dict[str, str]) -> bool:
         if unit["load"] == "not-found" and not self._include_not_found:

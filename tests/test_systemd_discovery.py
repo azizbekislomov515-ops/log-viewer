@@ -31,7 +31,7 @@ def _ids(result):  # type: ignore[no-untyped-def]
 
 def test_json_output_parsed_and_noise_filtered() -> None:
     runner = FakeRunner({JSON_CMD: ok(json.dumps(UNITS))})
-    result = SystemdDiscoverer(runner).discover()
+    result = SystemdDiscoverer(runner, journal_check=lambda: None).discover()
 
     assert result.issues == ()
     (group,) = result.groups

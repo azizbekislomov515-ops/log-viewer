@@ -124,6 +124,7 @@ class BackendLike(Protocol):
     def unfollow(self, source_id: str) -> None: ...
     def refresh_discovery(self) -> None: ...
     def take_entries(self, limit: int = ...) -> list[LogEntry]: ...
+    def clear_secrets(self) -> None: ...
 
     @property
     def backlog(self) -> int: ...
@@ -1088,9 +1089,10 @@ class MainWindow(QMainWindow):
                 return
 
         def done(_: object) -> None:
-            vault = data_dir() / "vault"
-            for name in ("vault.json", "vault.key"):
-                (vault / name).unlink(missing_ok=True)
+            # Files left by an earlier session, then the live vault (which rotates its key):
+            # the redactor must not write the old secrets back.
+            (data_dir() / "vault" / "vault.json").unlink(missing_ok=True)
+            self.backend.clear_secrets()
             for tab in self._all_tabs():
                 for view in tab.views:
                     view.model.reload()

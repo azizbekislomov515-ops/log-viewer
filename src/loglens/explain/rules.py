@@ -304,12 +304,11 @@ class RuleSandbox(ImmutableSandboxedEnvironment):
     def call_binop(self, context: Any, operator: str, left: Any, right: Any) -> Any:
         """Refuse repetition that would allocate more than ``MAX_REPEAT`` items."""
         if operator == "*":
-            for seq, times in ((left, right), (right, left)):
-                if (
-                    isinstance(seq, str | list | tuple)
-                    and isinstance(times, int)
-                    and len(seq) * max(times, 0) > MAX_REPEAT
-                ):
+            if any(isinstance(v, list | tuple | dict) for v in (left, right)):
+                raise SecurityError("list repetition is not allowed in rule templates")
+            if isinstance(left, str) or isinstance(right, str):
+                seq, times = (left, right) if isinstance(left, str) else (right, left)
+                if not isinstance(times, int) or len(seq) * max(times, 0) > MAX_REPEAT:
                     raise SecurityError("repetition too large in a rule template")
         return super().call_binop(context, operator, left, right)
 
@@ -338,11 +337,14 @@ ALLOWED_NODES: tuple[type[nodes.Node], ...] = (
     nodes.Not, nodes.Getitem, nodes.Slice, nodes.Add, nodes.Sub, nodes.Mul, nodes.Div,
     nodes.FloorDiv, nodes.Mod, nodes.Neg, nodes.Pos, nodes.Concat, nodes.Tuple, nodes.List,
 )  # fmt: skip
+#: Only filters whose output is about as long as their input (no replace/center/
+#: indent/join/wordwrap: those can multiply a value's size).
 ALLOWED_FILTERS = frozenset({
-    "shquote", "thousands", "int", "float", "round", "filesizeformat", "lower", "upper",
-    "capitalize", "title", "trim", "default", "length", "replace", "truncate", "abs",
-    "string", "first", "last",
+    "shquote", "thousands", "int", "float", "round", "abs", "filesizeformat", "lower",
+    "upper", "capitalize", "title", "trim", "default", "length",
 })  # fmt: skip
+#: Longest text a rule renders (anything after is cut).
+MAX_OUTPUT_CHARS = 8_000
 #: Longest string/list a template may build with ``*``.
 MAX_REPEAT = 10_000
 #: A rule's regex gives up on a line after this long (and the engine disables the rule
@@ -672,4 +674,4 @@ def _clip(value: Any) -> Any:
 def _render(template: Template | None, context: Mapping[str, Any]) -> str:
     if template is None:
         return ""
-    return " ".join(template.render(context).split())
+    return " ".join(template.render(context)[:MAX_OUTPUT_CHARS].split())

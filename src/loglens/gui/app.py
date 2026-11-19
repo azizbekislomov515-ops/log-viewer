@@ -146,10 +146,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING)
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         print(
-            "loglens: running as root is not needed and not recommended; "
-            "add your user to the 'adm' and 'docker' groups instead.",
+            "loglens: refusing to run the GUI as root: it parses hostile log text and needs "
+            "only read access. Run it as your user; the Issues panel shows the exact group "
+            "or ACL fix for each log you cannot read (see docs/SECURITY.md).",
             file=sys.stderr,
         )
+        return 2
     config_path = args.config or default_config_path()
     settings = load_settings(config_path)
     if args.theme:

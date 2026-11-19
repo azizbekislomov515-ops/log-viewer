@@ -55,6 +55,9 @@ class StubBackend(QObject):
     def refresh_discovery(self) -> None:
         self.refreshes += 1
 
+    def clear_secrets(self) -> None:
+        self.secrets_cleared = True
+
     def take_entries(self, limit: int = 200_000) -> list[LogEntry]:
         out = list(self.queue)
         self.queue.clear()

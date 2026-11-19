@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import grp
 import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -102,13 +103,19 @@ def _unreadable_issue(path: Path) -> DiscoveryIssue:
         group = grp.getgrgid(path.stat().st_gid).gr_name
     except (OSError, KeyError):
         group = None
+    folder = shlex.quote(str(path.parent))
+    acl = (
+        f"sudo setfacl -m u:$USER:r {shlex.quote(str(path))} && "
+        f"sudo setfacl -m u:$USER:rx {folder} && sudo setfacl -d -m u:$USER:r {folder} "
+        "(the default ACL keeps access after log rotation)"
+    )
     if group and group != "root":
         hint = (
             f"Add your user to the '{group}' group (sudo usermod -aG {group} $USER), "
-            "then log out and back in."
+            f"then log out and back in. Or grant only this log: {acl}"
         )
     else:
-        hint = f"Grant read access without running as root, e.g.: sudo setfacl -m u:$USER:r {path}"
+        hint = f"Grant read access without running as root: {acl}"
     return DiscoveryIssue(
         FileDiscoverer.name,
         "file_not_readable",

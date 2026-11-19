@@ -201,6 +201,11 @@ class Backend(QObject):
             self._last = snapshot
             self.sourcesChanged.emit(*snapshot)
 
+    def clear_secrets(self) -> None:
+        """Forget the secrets the live redactor kept for reveal (Clear all data)."""
+        if self._redactor is not None and self._redactor.vault is not None:
+            self._redactor.vault.clear()
+
     async def _stats_loop(self, pipeline: IngestPipeline) -> None:
         last_received, last_time = pipeline.stats.received, time.monotonic()
         while True:
