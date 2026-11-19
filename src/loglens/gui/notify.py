@@ -15,6 +15,7 @@ counted and mentioned in the next notification.
 
 from __future__ import annotations
 
+import html
 import logging
 import shutil
 import time
@@ -36,6 +37,8 @@ RESTART_LOOP_COUNT = 3
 RESTART_LOOP_WINDOW = timedelta(minutes=5)
 PER_KEY_INTERVAL = 60.0
 GLOBAL_PER_MINUTE = 5
+MAX_SUMMARY = 120
+MAX_BODY = 400
 
 Pair = tuple[LogEntry, Explanation | None]
 
@@ -147,11 +150,18 @@ class DesktopNotifier:
             "--app-name=LogLens",
             f"--urgency={note.urgency}",
             "--icon=dialog-warning" if note.urgency == "critical" else "--icon=dialog-information",
-            "--",
-            note.summary,
-            note.body,
+            "--",  # log text can never be read as an option
+            _clean(note.summary, MAX_SUMMARY),
+            # The body may hold markup (<a>, <img>, <b>) per the freedesktop spec: escape it.
+            html.escape(_clean(note.body, MAX_BODY), quote=False),
         ]
         return self._starter(self.program, args)
+
+
+def _clean(text: str, limit: int) -> str:
+    """One readable line: control characters dropped, length capped."""
+    text = "".join(c if c.isprintable() else " " for c in text)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def _start_detached(program: str, args: list[str]) -> bool:

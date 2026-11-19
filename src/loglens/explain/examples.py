@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from loglens.collectors import source_from_id
 from loglens.core.models import Explanation, LogEntry, RawRecord
@@ -43,10 +44,17 @@ class ExampleReport:
     failures: tuple[ExampleFailure, ...]
 
 
-def parse_line(line: str, source_id: str, normalizer: Normalizer | None = None) -> LogEntry:
-    """Parse ``line`` as if collected from ``source_id`` (what examples and ``explain`` use)."""
+def parse_line(
+    line: str,
+    source_id: str,
+    normalizer: Normalizer | None = None,
+    fields: Mapping[str, Any] | None = None,
+) -> LogEntry:
+    """Parse ``line`` as if collected from ``source_id``, with the collector's ``fields``
+    (what examples and ``explain`` use)."""
     normalize = normalizer or Normalizer()
-    return normalize(source_from_id(source_id), RawRecord(source_id, line, EXAMPLE_TIME))
+    record = RawRecord(source_id, line, EXAMPLE_TIME, fields=dict(fields or {}))
+    return normalize(source_from_id(source_id), record)
 
 
 def run_examples(engine: ExplanationEngine, packs: Iterable[str] | None = None) -> ExampleReport:
@@ -61,13 +69,17 @@ def run_examples(engine: ExplanationEngine, packs: Iterable[str] | None = None) 
         rules += 1
         for example in rule.examples:
             examples += 1
-            got = engine.explain(parse_line(example.line, example.source_id, normalizer))
+            got = engine.explain(
+                parse_line(example.line, example.source_id, normalizer, example.fields)
+            )
             problem = _positive_problem(rule, got, example.expect or {})
             if problem:
                 failures.append(ExampleFailure(rule, example.line, problem))
         for example in rule.counter_examples:
             examples += 1
-            got = engine.explain(parse_line(example.line, example.source_id, normalizer))
+            got = engine.explain(
+                parse_line(example.line, example.source_id, normalizer, example.fields)
+            )
             if got is not None and got.rule_id == rule.id:
                 failures.append(ExampleFailure(rule, example.line, "counter-example matched"))
     return ExampleReport(rules, examples, tuple(failures))

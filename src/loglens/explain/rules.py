@@ -74,6 +74,8 @@ class Example:
     line: str
     source_id: str
     expect: Mapping[str, str] | None = None
+    #: Collector fields the line arrives with (e.g. ``{"stream": "events"}``).
+    fields: Mapping[str, Any] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,13 +465,23 @@ def _compile(
         references=tuple(raw.get("references", ())),
         tags=tuple(raw.get("tags", ())),
         examples=tuple(
-            Example(ex["line"], ex.get("source", default_source), ex["expect"])
+            Example(
+                ex["line"],
+                ex.get("source", default_source),
+                ex["expect"],
+                MappingProxyType(dict(ex.get("fields", {}))),
+            )
             for ex in raw["examples"]
         ),
         counter_examples=tuple(
             Example(ex, default_source)
             if isinstance(ex, str)
-            else Example(ex["line"], ex.get("source", default_source))
+            else Example(
+                ex["line"],
+                ex.get("source", default_source),
+                None,
+                MappingProxyType(dict(ex.get("fields", {}))),
+            )
             for ex in raw["counter_examples"]
         ),
     )

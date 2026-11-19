@@ -103,9 +103,17 @@ def incident_report(
             if exp.suggested_action:
                 lines.append(f"- **Next step:** {_md(exp.suggested_action)}")
             lines.append("")
-        fence = "````" if "```" in entry.raw else "```"
+        fence = "`" * max(3, _longest_run(entry.raw, "`") + 1)  # the line cannot close it
         lines += [fence, entry.raw, fence, ""]
     return "\n".join(lines)
+
+
+def _longest_run(text: str, char: str) -> int:
+    longest = current = 0
+    for c in text:
+        current = current + 1 if c == char else 0
+        longest = max(longest, current)
+    return longest
 
 
 def _md(text: str) -> str:

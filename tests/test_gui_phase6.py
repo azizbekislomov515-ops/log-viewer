@@ -100,9 +100,9 @@ def stored(storage: Storage) -> list[LogEntry]:
     entries = []
     for source, lines in LINES:
         for i, line in enumerate(lines):
-            entries.append(
-                normalize(source, RawRecord(source.id, line, NOW - timedelta(seconds=30 - i)))
-            )
+            fields = {"stream": "events"} if " container " in line else {}
+            record = RawRecord(source.id, line, NOW - timedelta(seconds=30 - i), fields=fields)
+            entries.append(normalize(source, record))
     return storage.write_batch(entries, {})
 
 

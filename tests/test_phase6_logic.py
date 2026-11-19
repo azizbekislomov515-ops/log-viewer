@@ -77,15 +77,14 @@ def engine() -> ExplanationEngine:
     return ExplanationEngine(load_rules())
 
 
-def entries_for(source: LogSource, lines: list[str], start_id: int = 1) -> list[LogEntry]:
+def entries_for(
+    source: LogSource, lines: list[str], start_id: int = 1, fields: dict[str, str] | None = None
+) -> list[LogEntry]:
     normalize = Normalizer()
     out = []
     for i, line in enumerate(lines):
         stamp = NOW - timedelta(seconds=len(lines) - i)
-        entry = normalize(
-            source,
-            RawRecord(source.id, line, stamp),
-        )
+        entry = normalize(source, RawRecord(source.id, line, stamp, fields=dict(fields or {})))
         out.append(replace(entry, id=start_id + i))
     return out
 
@@ -180,8 +179,10 @@ def test_docker_cards_for_container_lifecycle(engine: ExplanationEngine) -> None
             f"2026-11-19T11:5{i}:00.000+00:00 container die abc (exitCode=1, image=alpine, name=loglens-demo-flaky-1)",
             f"2026-11-19T11:5{i}:01.000+00:00 container start abc (image=alpine, name=loglens-demo-flaky-1)",
         ]
-    entries = entries_for(flaky, lines)
+    entries = entries_for(flaky, lines, fields={"stream": "events"})
     explanations = {e.id: engine.explain(e, flaky) for e in entries}
+    spoofed = entries_for(flaky, lines, fields={"stream": "stdout"})
+    assert all(engine.explain(e, flaky) is None for e in spoofed)  # stdout cannot fake events
     report = build_report(
         "flaky",
         [flaky],
@@ -274,10 +275,16 @@ def test_desktop_notifier_passes_text_as_arguments() -> None:
     calls: list[tuple[str, list[str]]] = []
     notifier = DesktopNotifier(starter=lambda prog, args: calls.append((prog, args)) or True)
     note = Notification("-rf $(evil)", "body", "s", "critical", "critical")
-    if notifier.available:
-        assert notifier.send(note)
-        args = calls[0][1]
-        assert args[-3:] == ["--", "-rf $(evil)", "body"]  # never parsed as options
+    notifier.program = "/usr/bin/notify-send"
+    assert notifier.send(note)
+    assert calls[0][1][-3:] == ["--", "-rf $(evil)", "body"]  # never parsed as options
+    markup = Notification("x\x1b[31m", '<a href="https://evil">click</a> & <img src=x>', "s", "c")
+    notifier.send(markup)
+    summary, body = calls[1][1][-2:]
+    assert "\x1b" not in summary
+    assert body == '&lt;a href="https://evil"&gt;click&lt;/a&gt; &amp; &lt;img src=x&gt;'
+    notifier.send(Notification("s" * 500, "b" * 5000, "s", "c"))
+    assert len(calls[2][1][-2]) == 120 and len(calls[2][1][-1]) == 400
     notifier.program = None
     assert notifier.send(note) is False
 
@@ -394,6 +401,9 @@ def test_incident_report_markdown(engine: ExplanationEngine) -> None:
     assert "## " in report and "Blocked HTTPS site: www.facebook.com" in report
     assert "**Next step:**" in report and "No explanation available" in report
     assert "```\n1795076810.563" in report
+    fenced = LogEntry(3, "docker:a", NOW, Severity.INFO, "x ```` y", "x ```` y")
+    tricky = incident_report([(fenced, None)], {})
+    assert "`````\nx ```` y\n`````" in tricky  # fence longer than any run in the line
     assert incident_report([], {}).endswith("No entries selected.\n")
 
 
@@ -421,7 +431,7 @@ def test_restarts_make_a_service_degraded(engine: ExplanationEngine) -> None:
         {"container_name": "f"},
     )
     lines = [f"2026-11-19T11:5{i}:01.000+00:00 container start abc (name=f)" for i in range(3)]
-    entries = entries_for(flaky, lines)
+    entries = entries_for(flaky, lines, fields={"stream": "events"})
     explanations = {e.id: engine.explain(e, flaky) for e in entries}
     report = build_report(
         "f",

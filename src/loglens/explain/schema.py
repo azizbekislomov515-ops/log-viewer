@@ -44,11 +44,14 @@ _EXPECT: dict[str, Any] = {
     },
 }
 
+#: Fields the collector attaches (e.g. ``stream: events``), which log text cannot forge.
+_COLLECTOR_FIELDS: dict[str, Any] = {"type": "object", "additionalProperties": _SCALAR}
+
 _EXAMPLE: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": ["line", "expect"],
-    "properties": {"line": _TEXT, "source": _TEXT, "expect": _EXPECT},
+    "properties": {"line": _TEXT, "source": _TEXT, "fields": _COLLECTOR_FIELDS, "expect": _EXPECT},
 }
 
 _COUNTER_EXAMPLE: dict[str, Any] = {
@@ -58,7 +61,7 @@ _COUNTER_EXAMPLE: dict[str, Any] = {
             "type": "object",
             "additionalProperties": False,
             "required": ["line"],
-            "properties": {"line": _TEXT, "source": _TEXT},
+            "properties": {"line": _TEXT, "source": _TEXT, "fields": _COLLECTOR_FIELDS},
         },
     ]
 }

@@ -4,6 +4,8 @@
 # `docker events` lines look like
 #   2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=137, image=nginx, name=web-1)
 # Attributes are sorted, so the regexes find exitCode/name with look-aheads.
+# Lifecycle rules require `stream: events`, set only by the Docker events collector: a
+# container printing such a line on stdout must not fake an exit, an OOM kill or a restart.
 # dockerd lines go through the dockerd parser: fields event, container_id, error, signal...
 pack: docker
 version: 1
@@ -36,6 +38,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>0)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} stopped normally (exit code 0); its main program finished its work.
     action: Nothing to do for one-off jobs. If {{ name | shquote }} is a long-running service, check why its program exited (docker logs {{ name | shquote }}).
@@ -44,10 +47,14 @@ rules:
     severity_override: info
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=0, image=alpine, name=backup-job)"
+        fields: {stream: events}
         expect:
           title: backup-job finished (exit 0)
           text: Container backup-job stopped normally (exit code 0); its main program finished its work.
     counter_examples:
+      - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=0, image=alpine, name=backup-job)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=1, image=alpine, name=backup-job)"
 
   - id: docker.container.exit_1
@@ -57,6 +64,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>1)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} stopped because its program reported an error (exit code 1).
     cause: An application error, such as bad configuration, a missing file or a failed connection to a database.
@@ -66,9 +74,13 @@ rules:
     severity_override: error
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=1, image=myapp:2.3, name=api-1)"
+        fields: {stream: events}
         expect:
           text: Container api-1 stopped because its program reported an error (exit code 1).
     counter_examples:
+      - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=1, image=myapp:2.3, name=api-1)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=137, image=myapp:2.3, name=api-1)"
 
   - id: docker.container.exit_125
@@ -78,6 +90,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>125)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Docker itself failed to run container {{ name }} (exit code 125); the program inside never started.
     cause: An invalid "docker run" option, a bad mount or port setting, or a daemon-side error.
@@ -87,11 +100,15 @@ rules:
     severity_override: error
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=125, image=myapp, name=api-1)"
+        fields: {stream: events}
         expect:
           text: >-
             Docker itself failed to run container api-1 (exit code 125); the program inside never
             started.
     counter_examples:
+      - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=125, image=myapp, name=api-1)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=126, image=myapp, name=api-1)"
 
   - id: docker.container.exit_126
@@ -101,6 +118,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>126)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} stopped because its start command exists but could not be run (exit code 126).
     cause: The entrypoint script is not executable (missing chmod +x), or it is a directory or a file for another CPU type.
@@ -110,11 +128,15 @@ rules:
     severity_override: error
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=126, image=myapp, name=api-1)"
+        fields: {stream: events}
         expect:
           text: >-
             Container api-1 stopped because its start command exists but could not be run (exit
             code 126).
     counter_examples:
+      - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=126, image=myapp, name=api-1)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=127, image=myapp, name=api-1)"
 
   - id: docker.container.exit_127
@@ -124,6 +146,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>127)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} stopped because its start command (or a program it calls) does not exist in the image (exit code 127).
     cause: A typo in the command, or a tool the image does not include.
@@ -133,11 +156,15 @@ rules:
     severity_override: error
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=127, image=myapp, name=api-1)"
+        fields: {stream: events}
         expect:
           text: >-
             Container api-1 stopped because its start command (or a program it calls) does not
             exist in the image (exit code 127).
     counter_examples:
+      - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=127, image=myapp, name=api-1)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=126, image=myapp, name=api-1)"
 
   - id: docker.container.exit_137
@@ -147,6 +174,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>137)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} was forcibly killed (exit code 137, SIGKILL).
     cause: >-
@@ -161,6 +189,7 @@ rules:
     confidence: 0.8
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=137, image=nginx:1.27, name=web-1)"
+        fields: {stream: events}
         expect:
           title: web-1 was killed (exit 137)
           text: Container web-1 was forcibly killed (exit code 137, SIGKILL).
@@ -168,6 +197,9 @@ rules:
             Run "docker inspect -f '{{.State.OOMKilled}}' web-1". If true, raise its memory limit or
             fix the memory use; otherwise check who stopped it.
     counter_examples:
+      - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=137, image=nginx:1.27, name=web-1)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=143, image=nginx:1.27, name=web-1)"
 
   - id: docker.container.exit_139
@@ -177,6 +209,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>139)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} crashed with a segmentation fault (exit code 139); the program accessed memory it should not.
     cause: A bug in the program or a native library, or an image built for a different CPU or C library.
@@ -186,11 +219,15 @@ rules:
     severity_override: error
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=139, image=legacy:1, name=worker-2)"
+        fields: {stream: events}
         expect:
           text: >-
             Container worker-2 crashed with a segmentation fault (exit code 139); the program
             accessed memory it should not.
     counter_examples:
+      - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=139, image=legacy:1, name=worker-2)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=137, image=legacy:1, name=worker-2)"
 
   - id: docker.container.exit_143
@@ -200,6 +237,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>143)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} shut down after being asked to stop (SIGTERM, exit code 143).
     cause: A "docker stop", a compose down/restart, an update, or the host shutting down.
@@ -208,9 +246,13 @@ rules:
     severity_override: notice
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=143, image=nginx:1.27, name=web-1)"
+        fields: {stream: events}
         expect:
           text: Container web-1 shut down after being asked to stop (SIGTERM, exit code 143).
     counter_examples:
+      - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=143, image=nginx:1.27, name=web-1)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=0, image=nginx:1.27, name=web-1)"
 
   - id: docker.container.exit_other
@@ -220,6 +262,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>\d+)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: >-
       Container {{ name }} stopped with exit code {{ code }}{% if code | int > 128 %}, which means
@@ -231,12 +274,17 @@ rules:
     confidence: 0.7
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=2, image=myapp, name=api-1)"
+        fields: {stream: events}
         expect:
           text: Container api-1 stopped with exit code 2.
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=134, image=myapp, name=api-1)"
+        fields: {stream: events}
         expect:
           text: Container api-1 stopped with exit code 134, which means it was ended by signal 6.
     counter_examples:
+      - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=2, image=myapp, name=api-1)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:10:00.123456789+05:00 container start 4f1e2d3c4b5a (image=myapp, name=api-1)"
 
   - id: docker.container.oom_event
@@ -246,6 +294,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container oom \S+ (?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} hit its memory limit and the kernel killed a process inside it.
     action: Raise its memory limit (mem_limit / --memory) or find what uses the memory ("docker stats {{ name | shquote }}").
@@ -254,9 +303,13 @@ rules:
     severity_override: error
     examples:
       - line: "2026-11-18T20:12:00.000000000+05:00 container oom 1122334455aa (image=java-app:3, name=reports-1)"
+        fields: {stream: events}
         expect:
           text: Container reports-1 hit its memory limit and the kernel killed a process inside it.
     counter_examples:
+      - line: "2026-11-18T20:12:00.000000000+05:00 container oom 1122334455aa (image=java-app:3, name=reports-1)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=137, image=nginx:1.27, name=web-1)"
 
   - id: docker.container.started
@@ -266,6 +319,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       regex: ^container start \S+ (?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} started.
     category: availability
@@ -273,9 +327,13 @@ rules:
     tags: [restart]
     examples:
       - line: "2026-11-18T20:18:00.000000000+05:00 container start deadbeef0001 (image=nginx:1.27, name=web-1)"
+        fields: {stream: events}
         expect:
           text: Container web-1 started.
     counter_examples:
+      - line: "2026-11-18T20:18:00.000000000+05:00 container start deadbeef0001 (image=nginx:1.27, name=web-1)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:18:00.000000000+05:00 container create deadbeef0001 (image=nginx:1.27, name=web-1)"
 
   - id: docker.container.unhealthy
@@ -285,6 +343,7 @@ rules:
       units: [docker.service, containerd.service]
       parsers: [dockerd]
     match:
+      fields: {stream: events}
       field: raw  # the syslog parser mistakes "container health_status:" for host + program
       regex: "\\bcontainer health_status: unhealthy \\S+ (?=.*[(,] ?name=(?P<name>[^,)]+))"
     template: Container {{ name }} is running but failed its health check several times in a row.
@@ -295,9 +354,13 @@ rules:
     severity_override: error
     examples:
       - line: "2026-11-18T20:13:00.000000000+05:00 container health_status: unhealthy 2b3c4d5e6f70 (image=api:1, name=api-1)"
+        fields: {stream: events}
         expect:
           text: Container api-1 is running but failed its health check several times in a row.
     counter_examples:
+      - line: "2026-11-18T20:13:00.000000000+05:00 container health_status: unhealthy 2b3c4d5e6f70 (image=api:1, name=api-1)"  # printed on stdout: not Docker
+        source: docker:web-1
+        fields: {stream: stdout}
       - "2026-11-18T20:13:00.000000000+05:00 container health_status: healthy 2b3c4d5e6f70 (image=api:1, name=api-1)"
 
   # ---------------------------------------------------------------- daemon view of containers
