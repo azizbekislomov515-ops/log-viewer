@@ -213,3 +213,30 @@ def test_config_is_strict(tmp_path: Path) -> None:
     for bad in ('files = ["relative/*.log"]', "unknown = 1", 'units = "ssh"', "max_clients = 0"):
         with pytest.raises(ConfigError):
             load_config(_config(tmp_path, bad), require_root_owned=False)
+
+
+async def test_strict_file_collector_ignores_foreign_cursor_and_symlinks(tmp_path: Path) -> None:
+    from loglens.collectors.files import FileCollector  # noqa: PLC0415
+
+    allowed, secret = tmp_path / "app.log", tmp_path / "secret.txt"
+    allowed.write_text("allowed line\n")
+    secret.write_text("top secret\n")
+    info = secret.stat()
+    foreign = f"{info.st_dev}:{info.st_ino}:0"  # a cursor naming another file's inode
+    strict = FileCollector(strict=True, use_inotify=False)
+    src = source_from_id(f"file:{allowed}")
+    got = [r.message async for r in strict.stream(src, cursor=foreign, lines=10, follow=False)]
+    assert got == ["allowed line"]
+
+    link = tmp_path / "link.log"
+    link.symlink_to(secret)
+    with pytest.raises(OSError):
+        [r async for r in strict.stream(source_from_id(f"file:{link}"), follow=False)]
+
+
+def test_any_record_fits_one_message() -> None:
+    for text in ("\x1b" * 60_000, "😀" * 40_000, "é" * 48_000):
+        record = RawRecord("file:/x", text, fields={f"k{i}": "\x01" * 1000 for i in range(100)})
+        line = protocol.encode_record(record)
+        assert len(line) <= protocol.MAX_MESSAGE
+        assert protocol.decode_reply(line)["type"] == "record"

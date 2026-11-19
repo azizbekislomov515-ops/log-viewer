@@ -48,7 +48,7 @@ from loglens.helper.protocol import (
     StreamRequest,
     decode_request,
     encode,
-    record_message,
+    encode_record,
 )
 
 log = logging.getLogger(__name__)
@@ -182,7 +182,10 @@ class HelperServer:
             from loglens.collectors.files import FileCollector  # noqa: PLC0415
             from loglens.collectors.journald import JournaldCollector  # noqa: PLC0415
 
-            collectors = {SourceKind.SYSTEMD: JournaldCollector(), SourceKind.FILE: FileCollector()}
+            collectors = {
+                SourceKind.SYSTEMD: JournaldCollector(),
+                SourceKind.FILE: FileCollector(strict=True),  # no symlinks, cursor can't redirect
+            }
         self._collectors = collectors
         self._authorize = authorize or self._default_authorize
         self._slots = asyncio.Semaphore(config.max_clients)
@@ -278,7 +281,7 @@ class HelperServer:
         )  # fmt: skip
         try:
             async for record in records:
-                writer.write(encode(record_message(record)))
+                writer.write(encode_record(record))
                 await writer.drain()  # backpressure: a slow client slows only its stream
         finally:
             closer = getattr(records, "aclose", None)

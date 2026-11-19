@@ -25,6 +25,7 @@ import contextlib
 import io
 import logging
 import os
+import stat
 import time
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -60,7 +61,12 @@ class FileCollector:
         rotation_grace: float = 5.0,
         use_inotify: bool = True,
         backoff_max: float = 30.0,
+        strict: bool = False,
     ) -> None:
+        """``strict`` (used by loglens-helper, which reads on behalf of others): open only
+        the configured path itself, never through a symlink and only if it is a regular
+        file, and never let a cursor select a different (rotated) file."""
+        self._strict = strict
         self._poll_interval = poll_interval
         self._rotation_grace = rotation_grace
         self._use_inotify = use_inotify
@@ -94,7 +100,7 @@ class FileCollector:
     async def _follow(  # noqa: PLR0912 - one state machine, clearer in one place
         self, source_id: str, path: Path, cursor: str | None, lines: int, follow: bool
     ) -> AsyncIterator[RawRecord]:
-        current = _Tail(*_open_at(path, cursor, lines))
+        current = _Tail(*_open_at(path, cursor, lines, strict=self._strict))
         old: _Tail | None = None
         old_deadline = 0.0
         watcher = _Watcher(path, self._use_inotify) if follow else None
@@ -123,7 +129,7 @@ class FileCollector:
                         if old is not None:
                             old.close()
                         old, old_deadline = current, time.monotonic() + self._rotation_grace
-                        current = _Tail(_open(path), 0)
+                        current = _Tail(_open(path, strict=self._strict), 0)
                         log.info("file rotated (rename)", extra={"path": str(path)})
                         continue
                     case "truncated":
@@ -146,8 +152,8 @@ class _Tail:
 
     def __init__(self, file: BinaryIO, offset: int) -> None:
         self.file = file
-        stat = os.fstat(file.fileno())
-        self.dev, self.ino = stat.st_dev, stat.st_ino
+        info = os.fstat(file.fileno())
+        self.dev, self.ino = info.st_dev, info.st_ino
         self.base = offset
         self.splitter = LineSplitter()
 
@@ -186,18 +192,34 @@ class _Tail:
         )
 
 
-def _open(path: Path) -> BinaryIO:
-    return path.open("rb", buffering=0)
+def _open(path: Path, *, strict: bool = False) -> BinaryIO:
+    if not strict:
+        return path.open("rb", buffering=0)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(f"{path} is not a regular file")
+    return os.fdopen(fd, "rb", buffering=0)
 
 
-def _open_at(path: Path, cursor: str | None, lines: int) -> tuple[BinaryIO, int]:
+def _open_at(
+    path: Path, cursor: str | None, lines: int, *, strict: bool = False
+) -> tuple[BinaryIO, int]:
     """Open the file to read from: resume at the cursor, else the last ``lines`` lines."""
     parsed = _parse_cursor(cursor)
+    if parsed is not None and strict:
+        f = _open(path, strict=True)
+        info = os.fstat(f.fileno())
+        if (info.st_dev, info.st_ino) == parsed[:2] and parsed[2] <= info.st_size:
+            f.seek(parsed[2])
+            return f, parsed[2]
+        f.close()  # another file than the cursor's: start fresh, never search for it
+        parsed = None
     if parsed is not None:
         dev, ino, offset = parsed
-        stat = path.stat()
+        info = path.stat()
         target = path
-        if (stat.st_dev, stat.st_ino) != (dev, ino):
+        if (info.st_dev, info.st_ino) != (dev, ino):
             rotated = _find_inode(path.parent, dev, ino)
             if rotated is None:
                 log.warning("resume file rotated away; restarting at the current file",
@@ -209,7 +231,7 @@ def _open_at(path: Path, cursor: str | None, lines: int) -> tuple[BinaryIO, int]
         offset = offset if offset <= size else 0  # truncated while we were away
         f.seek(offset)
         return f, offset
-    f = _open(path)
+    f = _open(path, strict=strict)
     offset = _tail_offset(f, lines)
     f.seek(offset)
     return f, offset
@@ -256,12 +278,12 @@ def _tail_offset(f: BinaryIO, lines: int) -> int:
 def _rotation(path: Path, tail: _Tail) -> str | None:
     """'renamed', 'truncated' or None, comparing the path with the open descriptor."""
     try:
-        stat = path.stat()
+        info = path.stat()
     except OSError:
         return None  # moved away and not recreated yet: keep reading the open fd
-    if (stat.st_dev, stat.st_ino) != (tail.dev, tail.ino):
+    if (info.st_dev, info.st_ino) != (tail.dev, tail.ino):
         return "renamed"
-    if stat.st_size < tail.file.tell():
+    if info.st_size < tail.file.tell():
         return "truncated"
     return None
 

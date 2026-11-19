@@ -162,6 +162,21 @@ def record_message(record: RawRecord) -> dict[str, Any]:
     }
 
 
+def encode_record(record: RawRecord) -> bytes:
+    """A record line that always fits ``MAX_MESSAGE`` bytes, however the text encodes
+    (multi-byte UTF-8, JSON escapes): fields are dropped, then the text halved, until it
+    fits. A record is cut, never refused: one huge line must not end the stream."""
+    message = record_message(record)
+    while True:
+        try:
+            return encode(message)
+        except ProtocolError:
+            if message["fields"] != {"truncated": True}:
+                message["fields"] = {"truncated": True}
+            else:
+                message["message"] = message["message"][: len(message["message"]) // 2]
+
+
 def decode_reply(line: bytes) -> dict[str, Any]:
     """Parse and validate one reply line (the client trusts the helper no more than
     any other input)."""
