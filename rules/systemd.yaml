@@ -8,6 +8,12 @@ example_source: file:/var/log/syslog
 applies_to:
   programs: [systemd, init]
 
+overview:
+  cards:
+    - {title: Failures, kind: recent, when: {tags: [failure]}, columns: [unit], limit: 8, warn_at: 1,
+       empty: No unit failed.}
+    - {title: Restarts by unit, kind: top, field: unit, when: {tags: [restart]}}
+
 rules:
   # ---------------------------------------------------------------- failure results
   - id: systemd.unit.start_limit_hit
@@ -18,6 +24,7 @@ rules:
     cause: The service crashes right after starting (look at the error just before the first restart).
     action: Fix the cause, then run "systemctl reset-failed {{ unit | shquote }}" and "systemctl start {{ unit | shquote }}".
     category: availability
+    tags: [restart_loop, failure]
     severity_override: critical
     references: ["man:systemd.unit(5)"]
     examples:
@@ -41,6 +48,7 @@ rules:
     template: The service {{ unit }} stopped with an error code, so systemd marked it as failed.
     action: Run "journalctl -u {{ unit | shquote }} -n 50" to see what the program printed before it exited.
     category: availability
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: nginx.service: Failed with result 'exit-code'."
@@ -60,6 +68,7 @@ rules:
     cause: The program hangs (waiting for the network, a database, a lock) or simply needs longer than TimeoutStartSec.
     action: Check "journalctl -u {{ unit | shquote }}" for what it was waiting for; raise TimeoutStartSec only if slow start-up is normal.
     category: availability
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: postgresql.service: Start operation timed out. Terminating."
@@ -94,6 +103,7 @@ rules:
     template: The kernel killed a process of {{ unit }} because the machine (or the service's memory limit) ran out of memory.
     action: Check memory use ("systemctl status {{ unit | shquote }}" shows it) and MemoryMax=; add RAM/swap or reduce the service's memory use.
     category: performance
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: java-app.service: A process of this unit has been killed by the OOM killer."
@@ -113,6 +123,7 @@ rules:
       so systemd marked it as failed.
     action: Run "journalctl -u {{ unit | shquote }}" for the crash details{% if result == "core-dump" %} and "coredumpctl info" for the stack trace{% endif %}.
     category: availability
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: worker.service: Failed with result 'core-dump'."
@@ -133,6 +144,7 @@ rules:
     cause: ExecStart= points to a file that does not exist, is not executable, or has a bad interpreter line.
     action: Check ExecStart= in "systemctl cat {{ unit | shquote }}" and that the file exists and is executable.
     category: configuration
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: myapp.service: Failed at step EXEC spawning /opt/myapp/bin/run: No such file or directory"
@@ -153,6 +165,7 @@ rules:
     template: The main program of {{ unit }} stopped with exit status {{ status }} ({{ name }}).
     action: The program's own messages just before this line say why; see "journalctl -u {{ unit | shquote }} -n 50".
     category: availability
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: nginx.service: Main process exited, code=exited, status=1/FAILURE"
@@ -168,6 +181,7 @@ rules:
     template: The main program of {{ unit }} crashed with {{ signal }}{% if signal == "SEGV" %} (a memory access bug){% endif %} and left a core dump.
     action: Run "coredumpctl info" for the crash's stack trace; updating the package often fixes known crashes.
     category: availability
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: worker.service: Main process exited, code=dumped, status=11/SEGV"
@@ -245,6 +259,7 @@ rules:
     template: systemd did not start {{ what }} because something it depends on failed first.
     action: Find the failed dependency with "systemctl list-dependencies" and "systemctl --failed", and fix that one.
     category: availability
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: Dependency failed for Local File Systems."
@@ -277,6 +292,7 @@ rules:
       {% if unit %}Run "systemctl status {{ unit | shquote }}" and "journalctl -xeu {{ unit | shquote }}" for
       the reason.{% else %}Run "systemctl --failed" to find the unit, then "journalctl -xeu" with its name.{% endif %}
     category: availability
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: Failed to start nginx.service - A high performance web server and a reverse proxy server."
@@ -295,6 +311,7 @@ rules:
     template: systemd could not mount {{ what }}; programs that need it will fail or not start.
     action: Check the entry in /etc/fstab (device, UUID, options) and run "journalctl -b -u '*.mount'" for the error.
     category: availability
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: Failed to mount /srv/data."
@@ -311,6 +328,7 @@ rules:
     cause: The disk is missing or unplugged, or /etc/fstab refers to a UUID/label that changed.
     action: Compare /etc/fstab with "lsblk -f"; add "nofail" to the fstab entry if the disk is optional.
     category: availability
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: Timed out waiting for device /dev/disk/by-uuid/4f1e2d3c-1111-2222-3333-444455556666."
@@ -346,6 +364,7 @@ rules:
     template: systemd refuses to start {{ unit }} because its unit file is invalid.
     action: Read the systemd lines just above for the exact problem, fix "systemctl edit --full {{ unit | shquote }}", then "systemctl daemon-reload".
     category: configuration
+    tags: [failure]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali systemd[1]: myapp.service: Unit configuration has fatal error, unit will not be started."

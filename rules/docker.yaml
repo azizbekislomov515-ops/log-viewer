@@ -15,15 +15,32 @@ applies_to:
   units: [docker.service, containerd.service, docker.socket]
   paths: [/var/log/docker.log, /var/log/containerd.log, "*docker-events*"]
 
+overview:
+  # Container lifecycle events appear in each container's own stream.
+  applies_to: {services: ["*"], units: [docker.service, containerd.service]}
+  cards:
+    - {title: Exit codes, kind: top, field: code, when: {tags: [exit]}, empty: No container exited.}
+    - {title: Restart history, kind: recent, when: {tags: [restart]}, limit: 8,
+       empty: No restarts in this period.}
+    - {title: Crashes and kills, kind: recent, when: {tags: [oom, restart_loop, health]}, limit: 5,
+       warn_at: 1, empty: Nothing was killed.}
+    - {title: "Image, network and volume problems", kind: recent, when: {tags: [image, network, volume]},
+       limit: 5, empty: None.}
+
 rules:
   # ---------------------------------------------------------------- container exits
   - id: docker.container.exit_0
     title: "{{ name }} finished (exit 0)"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
-      regex: ^container die \S+ (?=.*[(,] ?exitCode=0[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
+      regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>0)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} stopped normally (exit code 0); its main program finished its work.
     action: Nothing to do for one-off jobs. If {{ name | shquote }} is a long-running service, check why its program exited (docker logs {{ name | shquote }}).
     category: availability
+    tags: [exit]
     severity_override: info
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=0, image=alpine, name=backup-job)"
@@ -35,12 +52,17 @@ rules:
 
   - id: docker.container.exit_1
     title: "{{ name }} failed (exit 1)"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
-      regex: ^container die \S+ (?=.*[(,] ?exitCode=1[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
+      regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>1)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} stopped because its program reported an error (exit code 1).
     cause: An application error, such as bad configuration, a missing file or a failed connection to a database.
     action: Read the last lines the program printed with "docker logs --tail 50 {{ name | shquote }}".
     category: availability
+    tags: [exit]
     severity_override: error
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=1, image=myapp:2.3, name=api-1)"
@@ -51,12 +73,17 @@ rules:
 
   - id: docker.container.exit_125
     title: "{{ name }} could not be started (exit 125)"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
-      regex: ^container die \S+ (?=.*[(,] ?exitCode=125[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
+      regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>125)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Docker itself failed to run container {{ name }} (exit code 125); the program inside never started.
     cause: An invalid "docker run" option, a bad mount or port setting, or a daemon-side error.
     action: Re-run the container's command by hand and read Docker's error message; check the daemon log (journalctl -u docker).
     category: configuration
+    tags: [exit]
     severity_override: error
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=125, image=myapp, name=api-1)"
@@ -69,12 +96,17 @@ rules:
 
   - id: docker.container.exit_126
     title: "{{ name }}: command not executable (exit 126)"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
-      regex: ^container die \S+ (?=.*[(,] ?exitCode=126[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
+      regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>126)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} stopped because its start command exists but could not be run (exit code 126).
     cause: The entrypoint script is not executable (missing chmod +x), or it is a directory or a file for another CPU type.
     action: Check the image's ENTRYPOINT/CMD and run "chmod +x" on the script in the Dockerfile.
     category: configuration
+    tags: [exit]
     severity_override: error
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=126, image=myapp, name=api-1)"
@@ -87,12 +119,17 @@ rules:
 
   - id: docker.container.exit_127
     title: "{{ name }}: command not found (exit 127)"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
-      regex: ^container die \S+ (?=.*[(,] ?exitCode=127[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
+      regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>127)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} stopped because its start command (or a program it calls) does not exist in the image (exit code 127).
     cause: A typo in the command, or a tool the image does not include.
     action: Check the command in the compose file or "docker run" line, and that the image contains it ("docker run --rm -it --entrypoint sh <image>").
     category: configuration
+    tags: [exit]
     severity_override: error
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=127, image=myapp, name=api-1)"
@@ -105,8 +142,12 @@ rules:
 
   - id: docker.container.exit_137
     title: "{{ name }} was killed (exit 137)"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
-      regex: ^container die \S+ (?=.*[(,] ?exitCode=137[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
+      regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>137)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} was forcibly killed (exit code 137, SIGKILL).
     cause: >-
       It ran out of memory (look for an "oom" event just before), or it was stopped and did not
@@ -115,6 +156,7 @@ rules:
       Run "docker inspect -f '{{ '{{' }}.State.OOMKilled{{ '}}' }}' {{ name | shquote }}". If true, raise its memory
       limit or fix the memory use; otherwise check who stopped it.
     category: availability
+    tags: [exit]
     severity_override: error
     confidence: 0.8
     examples:
@@ -130,12 +172,17 @@ rules:
 
   - id: docker.container.exit_139
     title: "{{ name }} crashed (exit 139)"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
-      regex: ^container die \S+ (?=.*[(,] ?exitCode=139[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
+      regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>139)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} crashed with a segmentation fault (exit code 139); the program accessed memory it should not.
     cause: A bug in the program or a native library, or an image built for a different CPU or C library.
     action: Check "docker logs {{ name | shquote }}" and the kernel log (segfault lines); try the image's latest version.
     category: availability
+    tags: [exit]
     severity_override: error
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=139, image=legacy:1, name=worker-2)"
@@ -148,11 +195,16 @@ rules:
 
   - id: docker.container.exit_143
     title: "{{ name }} stopped on request (exit 143)"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
-      regex: ^container die \S+ (?=.*[(,] ?exitCode=143[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
+      regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>143)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} shut down after being asked to stop (SIGTERM, exit code 143).
     cause: A "docker stop", a compose down/restart, an update, or the host shutting down.
     category: availability
+    tags: [exit]
     severity_override: notice
     examples:
       - line: "2026-11-18T20:10:00.123456789+05:00 container die 4f1e2d3c4b5a (exitCode=143, image=nginx:1.27, name=web-1)"
@@ -163,6 +215,10 @@ rules:
 
   - id: docker.container.exit_other
     title: "{{ name }} exited ({{ code }})"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
       regex: ^container die \S+ (?=.*[(,] ?exitCode=(?P<code>\d+)[,)])(?=.*[(,] ?name=(?P<name>[^,)]+))
     template: >-
@@ -170,6 +226,7 @@ rules:
       it was ended by signal {{ code | int - 128 }}{% endif %}.
     action: The program decides what its exit codes mean; check "docker logs --tail 50 {{ name | shquote }}".
     category: availability
+    tags: [exit]
     severity_override: warning
     confidence: 0.7
     examples:
@@ -184,11 +241,16 @@ rules:
 
   - id: docker.container.oom_event
     title: "{{ name }} ran out of memory"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
       regex: ^container oom \S+ (?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} hit its memory limit and the kernel killed a process inside it.
     action: Raise its memory limit (mem_limit / --memory) or find what uses the memory ("docker stats {{ name | shquote }}").
     category: performance
+    tags: [oom]
     severity_override: error
     examples:
       - line: "2026-11-18T20:12:00.000000000+05:00 container oom 1122334455aa (image=java-app:3, name=reports-1)"
@@ -199,6 +261,10 @@ rules:
 
   - id: docker.container.started
     title: "{{ name }} started"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
       regex: ^container start \S+ (?=.*[(,] ?name=(?P<name>[^,)]+))
     template: Container {{ name }} started.
@@ -214,6 +280,10 @@ rules:
 
   - id: docker.container.unhealthy
     title: "{{ name }} is unhealthy"
+    applies_to:
+      services: ["*"]
+      units: [docker.service, containerd.service]
+      parsers: [dockerd]
     match:
       field: raw  # the syslog parser mistakes "container health_status:" for host + program
       regex: "\\bcontainer health_status: unhealthy \\S+ (?=.*[(,] ?name=(?P<name>[^,)]+))"
@@ -221,6 +291,7 @@ rules:
     cause: The service inside is stuck, overloaded, or still starting; or the health check command itself is wrong.
     action: "See the last check results: docker inspect --format '{{ '{{' }}json .State.Health{{ '}}' }}' {{ name | shquote }}"
     category: availability
+    tags: [health]
     severity_override: error
     examples:
       - line: "2026-11-18T20:13:00.000000000+05:00 container health_status: unhealthy 2b3c4d5e6f70 (image=api:1, name=api-1)"
@@ -238,6 +309,7 @@ rules:
     template: Container {{ container_id[:12] }} hit its memory limit and the kernel killed a process inside it.
     action: Find the container with "docker ps -a --filter id={{ container_id[:12] | shquote }}" and raise its memory limit or reduce its memory use.
     category: performance
+    tags: [oom]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:12:00.000000000+05:00" level=info msg="ignoring event" container=1122334455aa module=libcontainerd namespace=moby topic=/tasks/oom type="*events.TaskOOM"'
@@ -257,6 +329,7 @@ rules:
     cause: The program ignores SIGTERM or needs longer to shut down; it may lose unsaved work.
     action: Make the program handle SIGTERM, or give it more time (stop_grace_period / docker stop -t).
     category: availability
+    tags: [oom]
     severity_override: warning
     examples:
       - line: 'time="2026-11-18T20:11:00.000000000+05:00" level=info msg="Container failed to exit within 10s of signal 15 - using the force" container=9a8b7c6d5e4f'
@@ -275,6 +348,7 @@ rules:
     template: The health check of container {{ container_id[:12] }} runs "{{ cmd }}", but the image does not contain that program, so every check fails.
     action: Install {{ cmd | shquote }} in the image, or change the HEALTHCHECK to a command the image has (e.g. wget, or a script).
     category: configuration
+    tags: [health]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:13:00.000000000+05:00" level=warning msg="Health check for container 2b3c4d5e6f70 error: OCI runtime exec failed: exec failed: unable to start container process: exec: \"curl\": executable file not found in $PATH: unknown"'
@@ -294,6 +368,7 @@ rules:
     cause: The check took longer than its timeout, or the container is too busy or broken to execute it.
     action: Check the container ("docker logs {{ container_id[:12] | shquote }}") and the HEALTHCHECK timeout.
     category: availability
+    tags: [health]
     severity_override: warning
     examples:
       - line: 'time="2026-11-18T20:13:00.000000000+05:00" level=warning msg="Health check for container 2b3c4d5e6f70 error: context deadline exceeded"'
@@ -309,6 +384,7 @@ rules:
     template: Container {{ id }} is stuck in a restart loop; it crashes right after starting and Docker keeps restarting it.
     action: Read why it crashes ("docker logs --tail 50 {{ id | shquote }}"); stop the loop with "docker update --restart=no {{ id | shquote }}" while you fix it.
     category: availability
+    tags: [restart_loop]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:20:00.000000000+05:00" level=error msg="Error response from daemon: Container 4f1e2d3c4b5a is restarting, wait until the container is running"'
@@ -350,6 +426,7 @@ rules:
     template: Docker could not download the image {{ image }}; the registry says it does not exist or needs a login.
     action: Check the image name for typos; for a private image run "docker login <registry>" first.
     category: configuration
+    tags: [image]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:20:00.000000000+05:00" level=error msg="Not continuing with pull after error: pull access denied for myorg/private-api, repository does not exist or may require ''docker login''"'
@@ -367,6 +444,7 @@ rules:
     template: The registry has the image, but not the version {{ image }}.
     action: Check the tag in your compose file or command against the tags published for that image.
     category: configuration
+    tags: [image]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:20:00.000000000+05:00" level=error msg="manifest for nginx:1.99 not found: manifest unknown: manifest unknown"'
@@ -382,6 +460,7 @@ rules:
     template: Docker Hub refused the download because this machine (or its public IP) pulled too many images recently.
     action: Log in with "docker login" (higher limit), wait a few hours, or use a registry mirror/cache.
     category: availability
+    tags: [image]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:20:00.000000000+05:00" level=error msg="Error response from daemon: toomanyrequests: You have reached your unauthenticated pull rate limit. https://www.docker.com/increase-rate-limit"'
@@ -400,6 +479,7 @@ rules:
     cause: No internet or DNS on this host, a firewall, or Docker not using the required HTTP proxy.
     action: Test "curl -I https://{{ host | shquote }}/v2/". If you need a proxy, configure it for the Docker daemon (systemd drop-in with HTTPS_PROXY).
     category: availability
+    tags: [image]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:20:00.000000000+05:00" level=error msg="Error response from daemon: Get \"https://registry-1.docker.io/v2/\": dial tcp: lookup registry-1.docker.io on 127.0.0.53:53: no such host"'
@@ -418,6 +498,7 @@ rules:
     template: A container could not start because port {{ port }} on {{ address }} is already used by another container.
     action: Find the other one with "docker ps --filter publish={{ port | shquote }}", then stop it or map this container to a different host port.
     category: configuration
+    tags: [network]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:13:30.000000000+05:00" level=error msg="Handler for POST /v1.47/containers/abc/start returned error: driver failed programming external connectivity on endpoint web-1: Bind for 0.0.0.0:80 failed: port is already allocated"'
@@ -433,6 +514,7 @@ rules:
     template: A container could not publish port {{ port }} because a program outside Docker already listens on it.
     action: "Find it with: sudo ss -ltnp | grep :{{ port | shquote }} then stop it or choose another host port."
     category: configuration
+    tags: [network]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:13:30.000000000+05:00" level=error msg="Handler for POST /v1.47/containers/abc/start returned error: driver failed programming external connectivity on endpoint web-1: Error starting userland proxy: listen tcp4 0.0.0.0:80: bind: address already in use"'
@@ -448,6 +530,7 @@ rules:
     template: A container refers to the Docker network {{ network }}, which does not exist (any more).
     action: Create it ("docker network create {{ network | shquote }}") or recreate the containers so they use the current network.
     category: configuration
+    tags: [network]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:20:00.000000000+05:00" level=error msg="Handler for POST /v1.47/containers/abc/start returned error: network shop_backend not found"'
@@ -463,6 +546,7 @@ rules:
     template: Docker could not create a network because its IP range overlaps one that already exists (another Docker network or a VPN).
     action: Remove unused networks ("docker network prune") or set a different subnet / default-address-pools in daemon.json.
     category: configuration
+    tags: [network]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:20:00.000000000+05:00" level=error msg="failed to create network shop_default: Error response from daemon: Pool overlaps with other one on this address space"'
@@ -480,6 +564,7 @@ rules:
     template: A container could not start because the host folder {{ path }} it should mount does not exist.
     action: Create {{ path | shquote }} on the host (or fix the path in the compose file / -v option).
     category: configuration
+    tags: [volume]
     severity_override: error
     examples:
       - line: 'time="2026-11-18T20:20:00.000000000+05:00" level=error msg="Handler for POST /v1.47/containers/create returned error: invalid mount config for type \"bind\": bind source path does not exist: /srv/data/uploads"'
@@ -495,6 +580,7 @@ rules:
     template: The volume {{ volume }} cannot be deleted because a container (running or stopped) still uses it.
     action: Remove that container first ("docker ps -a --filter volume={{ volume | shquote }}"), then the volume.
     category: configuration
+    tags: [volume]
     severity_override: warning
     examples:
       - line: 'time="2026-11-18T20:20:00.000000000+05:00" level=error msg="Error response from daemon: remove pgdata: volume is in use - [4f1e2d3c4b5a]"'
@@ -511,6 +597,7 @@ rules:
     cause: For NFS/CIFS volumes, the file server is unreachable or rejected the mount options.
     action: Check the volume's driver options ("docker volume inspect") and that the remote server is reachable.
     category: availability
+    tags: [volume]
     severity_override: error
     examples:
       - line: >-

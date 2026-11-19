@@ -10,6 +10,17 @@ applies_to:
   parsers: [sshd]
   programs: [sshd, sshd-session]
   units: [ssh.service, sshd.service, "ssh@*.service", "sshd@*.service"]
+  paths: ["/var/log/auth.log*", "/var/log/secure*"]
+
+overview:
+  key_fields: {src_ip: source IP, user: user}
+  cards:
+    - {title: Failed logins by IP, kind: top, field: src_ip, when: {tags: [login_failure]},
+       warn_at: 10, empty: No failed logins.}
+    - {title: Targeted accounts, kind: top, field: user, when: {tags: [login_failure]}}
+    - {title: Successful logins, kind: recent, when: {tags: [login]}, columns: [user, src_ip], limit: 8,
+       empty: Nobody logged in.}
+    - {title: Scanners and probes, kind: count, when: {tags: [probe]}}
 
 rules:
   # ---------------------------------------------------------------- successful logins
@@ -23,6 +34,7 @@ rules:
       Make sure this was expected. Direct root logins are safer disabled ("PermitRootLogin no" or
       "prohibit-password" in /etc/ssh/sshd_config); use a normal account plus sudo.
     category: security
+    tags: [login]
     severity_override: warning
     examples:
       - line: "Nov 17 22:58:00 kali sshd[1800]: Accepted password for root from 203.0.113.50 port 50022 ssh2"
@@ -39,6 +51,7 @@ rules:
     template: "{{ user }} logged in over SSH from {{ src_ip }} with a password."
     action: If {{ src_ip | shquote }} is unfamiliar, check who used the {{ user | shquote }} account; consider SSH keys instead of passwords.
     category: security
+    tags: [login]
     severity_override: notice
     examples:
       - line: "Nov 17 22:54:00 kali sshd[1500]: Accepted password for deploy from 10.0.0.50 port 52000 ssh2"
@@ -54,6 +67,7 @@ rules:
     extract: [user, src_ip, auth_method]
     template: "{{ user }} logged in over SSH from {{ src_ip }} using {{ auth_method }} authentication."
     category: security
+    tags: [login]
     severity_override: info
     examples:
       - line: "Nov 17 22:51:00 kali sshd[1400]: Accepted publickey for azik from 192.168.1.10 port 40000 ssh2: ED25519 SHA256:Zx3r9Kq2mW8vN1bT4yH6uJ0pL5sD7fG9hA2cE4iO6k"
@@ -79,6 +93,7 @@ rules:
     cause: Almost always an automated scanner guessing common user names.
     action: If {{ src_ip | shquote }} keeps trying, block it (fail2ban or a firewall rule) and allow SSH only with keys.
     category: security
+    tags: [login_failure]
     severity_override: warning
     examples:
       - line: "Nov 17 22:50:09 kali sshd[1301]: Failed password for invalid user admin from 203.0.113.9 port 51234 ssh2"
@@ -98,6 +113,7 @@ rules:
     cause: Usually password guessing by a bot; root is the most attacked account.
     action: Disable root logins ("PermitRootLogin no") and block {{ src_ip | shquote }} if it repeats.
     category: security
+    tags: [login_failure]
     severity_override: warning
     examples:
       - line: "Nov 17 22:50:20 kali sshd[1310]: Failed password for root from 203.0.113.9 port 51300 ssh2"
@@ -114,6 +130,7 @@ rules:
     template: An SSH key offered by {{ src_ip }} for the user {{ user }} was not accepted.
     cause: Often harmless (a client tries several keys before the right one); repeated failures mean the key is not in ~{{ user }}/.ssh/authorized_keys.
     category: security
+    tags: [login_failure]
     severity_override: notice
     confidence: 0.7
     examples:
@@ -131,6 +148,7 @@ rules:
     template: "{{ src_ip }} failed to log in as {{ user }} ({{ auth_method }} was wrong)."
     action: A single failure is usually a typo. Many failures from {{ src_ip | shquote }} mean someone is guessing the password.
     category: security
+    tags: [login_failure]
     severity_override: warning
     examples:
       - line: "Nov 17 22:59:00 kali sshd[1900]: Failed password for deploy from 10.0.0.50 port 52100 ssh2"
@@ -148,6 +166,7 @@ rules:
     template: '{{ src_ip }} asked to log in as "{{ user }}", which is not a user on this machine.'
     cause: Typically a bot trying common names (admin, test, oracle, ubuntu).
     category: security
+    tags: [login_failure]
     severity_override: warning
     examples:
       - line: "Nov 17 22:50:05 kali sshd[1301]: Invalid user admin from 203.0.113.9 port 51234"
@@ -165,6 +184,7 @@ rules:
     cause: Password guessing (brute force), or a client offering many keys from its agent.
     action: Block {{ src_ip | shquote }} if it is not yours (fail2ban does this automatically).
     category: security
+    tags: [login_failure]
     severity_override: warning
     examples:
       - line: "Nov 17 22:50:22 kali sshd[1310]: error: maximum authentication attempts exceeded for root from 203.0.113.9 port 51300 ssh2 [preauth]"
@@ -206,6 +226,7 @@ rules:
     optional: [user]
     template: sshd closed the connection from {{ src_ip }}{% if user %} (user {{ user }}){% endif %} after too many failed login attempts.
     category: security
+    tags: [login_failure]
     severity_override: warning
     examples:
       - line: "Nov 17 22:50:22 kali sshd[1310]: Disconnecting authenticating user root 203.0.113.9 port 51300: Too many authentication failures [preauth]"
@@ -222,6 +243,7 @@ rules:
     extract: [src_ip]
     template: "{{ src_ip }} connected to the SSH port and left without saying anything: a port scan or a health check."
     category: security
+    tags: [probe]
     severity_override: info
     confidence: 0.8
     examples:
@@ -242,6 +264,7 @@ rules:
     optional: [reason]
     cause: A scanner, a web browser or another program pointed at the wrong port.
     category: security
+    tags: [probe]
     severity_override: info
     examples:
       - line: "Nov 17 22:54:31 kali sshd[1511]: banner exchange: Connection from 198.51.100.8 port 41001: invalid format"
@@ -257,6 +280,7 @@ rules:
     extract: [src_ip]
     template: "{{ src_ip }} connected but did not finish logging in within the time limit (LoginGraceTime), so sshd dropped it."
     category: security
+    tags: [probe]
     severity_override: info
     examples:
       - line: "Nov 17 22:54:36 kali sshd[1515]: Timeout before authentication for connection from 198.51.100.11 to 10.0.0.2, pid = 1515"
@@ -276,6 +300,7 @@ rules:
     template: "{{ src_ip }} closed the SSH connection{% if user %} for user {{ user }}{% endif %} before logging in."
     cause: Typical of scanners and password-guessing bots that give up or move on; also a person cancelling a login.
     category: security
+    tags: [probe]
     severity_override: info
     confidence: 0.8
     examples:

@@ -14,6 +14,17 @@ applies_to:
   images: ["*squid*"]
   services: ["*squid*"]
 
+overview:
+  key_fields: {client_ip: client, domain: domain}
+  thresholds: {error_rate: 0.10}
+  cards:
+    - {title: Top clients, kind: top, field: client_ip}
+    - {title: Top domains, kind: top, field: domain}
+    - {title: Blocked sites, kind: top, field: domain, when: {tags: [denial]}, empty: Nothing was blocked.}
+    - {title: Sites that failed, kind: top, field: domain, when: {tags: [upstream]}, empty: Every site answered.}
+    - {title: Served from cache, kind: count, when: {tags: [cache_hit]}}
+    - {title: Proxy errors, kind: recent, when: {min_severity: error}, limit: 5, empty: No errors.}
+
 rules:
   # ---------------------------------------------------------------- access.log
   - id: squid.access.auth_required
@@ -30,6 +41,7 @@ rules:
       Ignore a single 407. If {{ client_ip | shquote }} keeps getting 407s, its proxy username or
       password is wrong or missing.
     category: security
+    tags: [auth]
     severity_override: info
     references: ["https://wiki.squid-cache.org/Features/Authentication"]
     examples:
@@ -57,6 +69,7 @@ rules:
       Nothing to do if {{ domain | shquote }} is meant to be blocked. Otherwise find the acl that lists
       {{ domain | shquote }} (grep -nF {{ domain | shquote }} /etc/squid/squid.conf /etc/squid/*.acl) and adjust it.
     category: security
+    tags: [denial]
     severity_override: notice
     references: ["man:squid(8)", "https://wiki.squid-cache.org/SquidFaq/SquidAcl"]
     examples:
@@ -85,6 +98,7 @@ rules:
       Nothing to do if this is intended (ads, blocked sites). Otherwise check which acl in
       /etc/squid/squid.conf matches {{ (domain or url) | shquote }}.
     category: security
+    tags: [denial]
     severity_override: notice
     references: ["https://wiki.squid-cache.org/SquidFaq/SquidAcl"]
     examples:
@@ -140,6 +154,31 @@ rules:
     counter_examples:
       - "1794955801.456      0 10.0.0.5 TCP_DENIED/403 3922 CONNECT facebook.com:443 - HIER_NONE/- text/html"
 
+  - id: squid.access.no_route
+    title: "Could not reach {{ domain }}"
+    match:
+      fields: {status: 503, hierarchy: HIER_NONE}
+    extract: [client_ip, domain]
+    template: >-
+      Squid could not connect to {{ domain }} at all for {{ client_ip }}, so it returned an
+      error page (503).
+    cause: The name {{ domain }} did not resolve (DNS failure), or every address of the server refused or timed out.
+    action: >-
+      On the proxy host, run "getent hosts {{ domain | shquote }}" and "curl -sI http://{{ domain | shquote }}/".
+      If DNS fails, check dns_nameservers in squid.conf and /etc/resolv.conf.
+    category: availability
+    tags: [upstream]
+    severity_override: error
+    confidence: 0.6
+    examples:
+      - line: "1794955809.555      3 10.0.0.40 TCP_MISS/503 4100 GET http://nxdomain.example.com/ - HIER_NONE/- text/html"
+        expect:
+          text: >-
+            Squid could not connect to nxdomain.example.com at all for 10.0.0.40, so it returned
+            an error page (503).
+    counter_examples:
+      - "1794955809.555    911 10.0.0.40 TCP_MISS/503 4100 GET http://down.example.com/ - HIER_DIRECT/203.0.113.99 text/html"
+
   - id: squid.access.aborted
     title: "Client gave up: {{ domain or url }}"
     match:
@@ -166,30 +205,6 @@ rules:
     counter_examples:
       - "1794955801.123    245 10.0.0.5 TCP_MISS/200 5123 GET http://example.com/index.html - HIER_DIRECT/93.184.216.34 text/html"
 
-  - id: squid.access.no_route
-    title: "Could not reach {{ domain }}"
-    match:
-      fields: {status: 503, hierarchy: HIER_NONE}
-    extract: [client_ip, domain]
-    template: >-
-      Squid could not connect to {{ domain }} at all for {{ client_ip }}, so it returned an
-      error page (503).
-    cause: The name {{ domain }} did not resolve (DNS failure), or every address of the server refused or timed out.
-    action: >-
-      On the proxy host, run "getent hosts {{ domain | shquote }}" and "curl -sI http://{{ domain | shquote }}/".
-      If DNS fails, check dns_nameservers in squid.conf and /etc/resolv.conf.
-    category: availability
-    severity_override: error
-    confidence: 0.6
-    examples:
-      - line: "1794955809.555      3 10.0.0.40 TCP_MISS/503 4100 GET http://nxdomain.example.com/ - HIER_NONE/- text/html"
-        expect:
-          text: >-
-            Squid could not connect to nxdomain.example.com at all for 10.0.0.40, so it returned
-            an error page (503).
-    counter_examples:
-      - "1794955809.555    911 10.0.0.40 TCP_MISS/503 4100 GET http://down.example.com/ - HIER_DIRECT/203.0.113.99 text/html"
-
   - id: squid.access.gateway_timeout
     title: "Timed out: {{ domain }}"
     match:
@@ -201,6 +216,7 @@ rules:
     cause: The web server or the network path to it is slow or down.
     action: Check whether {{ domain | shquote }} is reachable from the proxy host; if many sites time out, check the proxy's internet link.
     category: availability
+    tags: [upstream]
     severity_override: error
     examples:
       - line: "1794955809.555  60001 10.0.0.40 TCP_MISS/504 4100 GET http://slow.example.com/ - HIER_DIRECT/203.0.113.99 text/html"
@@ -229,6 +245,7 @@ rules:
       This is a problem on {{ domain | shquote }}'s side, not the proxy's. If {{ domain | shquote }} is one of your own
       servers, check its logs.
     category: availability
+    tags: [upstream]
     severity_override: error
     examples:
       - line: "1794955805.020   1523 10.0.0.5 TCP_MISS/502 3990 GET http://intranet.local/health - HIER_DIRECT/10.0.5.20 text/html"
@@ -275,6 +292,7 @@ rules:
       current {% if "UNMODIFIED" in cache_result %}(it was, so the cached copy was used){% else %}(it
       had changed, so a fresh copy was downloaded){% endif %}.
     category: performance
+    tags: [cache_hit]
     severity_override: info
     examples:
       - line: "1794955805.399     95 10.0.0.7 TCP_REFRESH_UNMODIFIED/200 22541 GET http://security.debian.org/debian-security/dists/bookworm-security/InRelease - HIER_DIRECT/151.101.2.132 application/octet-stream"
@@ -297,6 +315,7 @@ rules:
       Squid answered {{ client_ip }}'s request for {{ url }} from its own cache
       ({{ bytes | filesizeformat }}), without contacting the internet.
     category: performance
+    tags: [cache_hit]
     severity_override: info
     examples:
       - line: "1794955802.001     12 10.0.0.7 TCP_HIT/200 18432 GET http://deb.debian.org/debian/dists/bookworm/InRelease - HIER_NONE/- application/octet-stream"
@@ -345,6 +364,7 @@ rules:
       {{ elapsed_ms }} ms); it was not in the cache.
     cause: First visit, content that may not be cached (POST, private or dynamic pages), or an expired copy.
     category: performance
+    tags: [cache_miss]
     severity_override: info
     examples:
       - line: "1794955801.123    245 10.0.0.5 TCP_MISS/200 5123 GET http://example.com/index.html - HIER_DIRECT/93.184.216.34 text/html"
@@ -522,6 +542,7 @@ rules:
     cause: A typo in the address, a site that no longer exists, or a DNS server that cannot resolve it.
     action: Run "getent hosts {{ host | shquote }}" on the proxy host; if real sites fail too, check dns_nameservers in squid.conf.
     category: availability
+    tags: [upstream]
     severity_override: warning
     examples:
       - line: "2026/11/17 23:00:00 kid1| ipcacheParse: No Address records in response to 'nosuchhost.example'"
@@ -538,6 +559,7 @@ rules:
     cause: The network is down or the DNS server address in /etc/resolv.conf or dns_nameservers is unreachable.
     action: Check the network ("ip route", "ping" the DNS server) and the nameservers Squid uses.
     category: availability
+    tags: [upstream]
     severity_override: error
     examples:
       - line: "2026/11/17 23:00:00 kid1| idnsSendQuery: FD 8: sendto: (101) Network is unreachable"
@@ -554,6 +576,7 @@ rules:
     cause: "{{ peer }} stopped answering: it is down, overloaded, or the network to it is broken."
     action: Check that {{ peer | shquote }} is running and reachable; requests that must go through it will fail until it is back.
     category: availability
+    tags: [upstream]
     severity_override: error
     examples:
       - line: "2026/11/17 23:00:00 kid1| Detected DEAD Parent: proxy2.corp.example"
@@ -585,6 +608,7 @@ rules:
     cause: The server or upstream proxy is down, a firewall blocks the connection, or the network path is broken.
     action: From the proxy host, test the connection (e.g. "nc -vz {{ peer | shquote }} {{ (port or 80) | shquote }}").
     category: availability
+    tags: [upstream]
     severity_override: error
     examples:
       - line: "2026/11/17 22:53:15 kid1| ERROR: Connection to 10.0.5.20 failed"
@@ -623,6 +647,7 @@ rules:
     cause: Common with transparent/intercepting proxies and sites behind CDNs; occasionally a real cache-poisoning attempt.
     action: If this repeats for normal sites, make the clients and Squid use the same DNS server. If one client triggers it constantly, look at that machine.
     category: security
+    tags: [detection]
     severity_override: warning
     confidence: 0.7
     references: ["https://wiki.squid-cache.org/KnowledgeBase/HostHeaderForgery"]

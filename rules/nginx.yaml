@@ -15,6 +15,17 @@ applies_to:
   images: ["*nginx*", "*openresty*"]
   services: ["*nginx*"]
 
+overview:
+  key_fields: {client_ip: client, path: page, status: status code}
+  thresholds: {error_rate: 0.05}
+  cards:
+    - {title: Top clients, kind: top, field: client_ip}
+    - {title: Top pages, kind: top, field: path}
+    - {title: Status codes, kind: top, field: status}
+    - {title: Backend problems, kind: recent, when: {tags: [backend]}, limit: 5, warn_at: 1,
+       empty: The backends answered every request.}
+    - {title: Attack probes by IP, kind: top, field: client_ip, when: {tags: [probe, detection]}}
+
 rules:
   # ---------------------------------------------------------------- access: attacks and junk
   - id: nginx.access.secret_file_served
@@ -29,6 +40,7 @@ rules:
       Block access to hidden files now (location ~ /\. { deny all; }), and treat every secret in
       {{ path | shquote }} as leaked: change those passwords and keys.
     category: security
+    tags: [detection]
     severity_override: critical
     examples:
       - line: '203.0.113.9 - - [17/Nov/2026:22:50:14 +0000] "GET /.env HTTP/1.1" 200 812 "-" "Mozilla/5.0"'
@@ -47,6 +59,7 @@ rules:
     cause: Automated internet scanners do this to every public web server.
     action: Nothing to do while the answers are 4xx. If one IP does it a lot, block it or add fail2ban.
     category: security
+    tags: [probe]
     severity_override: notice
     confidence: 0.8
     examples:
@@ -73,6 +86,7 @@ rules:
     cause: A client using https:// on port 80 (or another non-TLS listen port), or a scanner.
     action: Ignore if occasional; if your own clients do this, check their URLs or add "ssl" to that listen directive.
     category: configuration
+    tags: [probe]
     severity_override: info
     examples:
       - line: '198.51.100.23 - - [17/Nov/2026:22:50:03 +0000] "\x16\x03\x01\x02\x00\x01\x00\x01\xFC\x03\x03" 400 157 "-" "-"'
@@ -109,6 +123,7 @@ rules:
     template: "{{ client_ip }} tried to use this web server as a proxy to reach {{ path }}; nginx refused ({{ status }})."
     cause: Scanners looking for open proxies.
     category: security
+    tags: [probe]
     severity_override: notice
     examples:
       - line: '10.0.0.16 - - [17/Nov/2026:22:50:16 +0000] "CONNECT example.com:443 HTTP/1.1" 400 157 "-" "-"'
@@ -127,6 +142,7 @@ rules:
     cause: The backend (app server, PHP-FPM, container) is down, crashed, or closed the connection.
     action: Look at the matching line in the nginx error log (it names the upstream) and check that the backend is running.
     category: availability
+    tags: [backend]
     severity_override: error
     examples:
       - line: '10.0.0.10 - - [17/Nov/2026:22:50:08 +0000] "GET /api/v1/report HTTP/1.1" 502 157 "-" "Grafana/11.1.0"'
@@ -146,6 +162,7 @@ rules:
     cause: A slow database query or overloaded backend; or proxy_read_timeout is shorter than the work takes.
     action: Check the backend's load and logs for this request; raise proxy_read_timeout only if the slowness is expected.
     category: performance
+    tags: [backend]
     severity_override: error
     examples:
       - line: '10.0.0.10 - - [17/Nov/2026:22:50:09 +0000] "GET /api/v1/report HTTP/1.1" 504 167 "-" "Grafana/11.1.0"'
@@ -303,6 +320,7 @@ rules:
     cause: The backend application is stopped, crashed, or listens on a different port.
     action: Start or fix the backend, then check it answers locally (e.g. curl {{ upstream | shquote }}).
     category: availability
+    tags: [backend]
     severity_override: error
     examples:
       - line: '2026/11/17 22:50:03 [error] 29#29: *3 connect() failed (111: Connection refused) while connecting to upstream, client: 10.0.0.10, server: api.example.com, request: "GET /api/v1/report HTTP/1.1", upstream: "http://127.0.0.1:8080/api/v1/report", host: "api.example.com"'
@@ -324,6 +342,7 @@ rules:
     cause: The backend is overloaded or the request does slow work (a big report, a slow database query).
     action: Check the backend's load and logs; raise proxy_read_timeout only if the slowness is expected.
     category: performance
+    tags: [backend]
     severity_override: error
     examples:
       - line: '2026/11/17 22:50:04 [error] 29#29: *4 upstream timed out (110: Connection timed out) while reading response header from upstream, client: 10.0.0.10, server: api.example.com, request: "GET /api/v1/report HTTP/1.1", upstream: "http://127.0.0.1:8080/api/v1/report", host: "api.example.com"'
@@ -344,6 +363,7 @@ rules:
     template: Every backend server in the upstream group for {{ upstream }} is marked as failed, so nginx could not forward the request at all.
     action: Bring at least one backend back; nginx retries failed ones after fail_timeout (10 s by default).
     category: availability
+    tags: [backend]
     severity_override: critical
     examples:
       - line: '2026/11/17 22:50:18 [error] 30#30: *16 no live upstreams while connecting to upstream, client: 10.0.0.36, server: _, request: "GET / HTTP/1.1", upstream: "http://backend/", host: "example.com"'
@@ -364,6 +384,7 @@ rules:
     template: "The PHP application crashed while handling {{ request }}: {{ kind }}, {{ detail }}"
     action: Fix the PHP code at the file and line shown; the visitor got an error page.
     category: availability
+    tags: [backend]
     severity_override: error
     examples:
       - line: '2026/11/17 22:50:11 [error] 29#29: *10 FastCGI sent in stderr: "PHP message: PHP Fatal error:  Uncaught Error: Call to undefined function foo() in /var/www/html/index.php:3" while reading response header from upstream, client: 10.0.0.32, server: example.com, request: "GET /index.php HTTP/1.1", upstream: "fastcgi://unix:/run/php/php8.2-fpm.sock:", host: "example.com"'

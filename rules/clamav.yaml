@@ -14,20 +14,90 @@ applies_to:
   images: ["*clamav*"]
   services: ["*clam*"]
 
+overview:
+  key_fields: {signature: signature}
+  thresholds: {error_rate: 0.5}
+  cards:
+    - {title: Detections, kind: recent, when: {tags: [detection]}, columns: [signature, file, client],
+       limit: 10, warn_at: 1, empty: No malware found.}
+    - {title: Detections by signature, kind: top, field: signature, when: {tags: [detection]}}
+    - {title: Signature updates, kind: recent, when: {tags: [update, update_failure]}, limit: 5,
+       empty: No update activity.}
+    - {title: Files that could not be scanned, kind: count,
+       when: {rules: [clamav.scan.error, clamav.scan.access_denied]}, warn_at: 1}
+
 rules:
   # ---------------------------------------------------------------- scan results
+  - id: clamav.scan.stream_eicar
+    title: "Antivirus test file from {{ client }}"
+    match:
+      field: raw
+      regex: 'instream\((?P<client>[^@)]+)@\d+\): (?P<signature>\S*(?i:eicar)\S*) FOUND'
+    template: >-
+      A file that {{ client }} sent to ClamAV for scanning is the EICAR test file. It is harmless:
+      it exists only to check that the antivirus is working.
+    action: Nothing to do if this was a test; otherwise find out what on {{ client | shquote }} sent it.
+    category: security
+    severity_override: notice
+    tags: [detection]
+    examples:
+      - line: "Thu Nov 19 08:26:10 2026 -> instream(172.18.0.7@33516): Eicar-Test-Signature.UNOFFICIAL FOUND"
+        expect:
+          title: Antivirus test file from 172.18.0.7
+          text: >-
+            A file that 172.18.0.7 sent to ClamAV for scanning is the EICAR test file. It is
+            harmless: it exists only to check that the antivirus is working.
+    counter_examples:
+      - "Thu Nov 19 08:26:10 2026 -> instream(172.18.0.7@33516): Win.Trojan.Agent-1 FOUND"
+
+  - id: clamav.scan.stream_found
+    title: "Malware sent by {{ client }}"
+    match:
+      field: raw
+      regex: 'instream\((?P<client>[^@)]+)@\d+\): (?P<signature>\S+) FOUND'
+    template: ClamAV found malware ({{ signature }}) in a file that {{ client }} sent for scanning.
+    cause: A program on {{ client }} (a mail or web filter, a backup, a script calling clamdscan) passed it a malicious file.
+    action: >-
+      Find out which program on {{ client | shquote }} sent the file, quarantine the original
+      and scan that machine.
+    category: security
+    severity_override: critical
+    tags: [detection]
+    examples:
+      - line: "Thu Nov 19 08:26:10 2026 -> instream(10.0.0.9@41000): Win.Trojan.Agent-1 FOUND"
+        expect:
+          text: ClamAV found malware (Win.Trojan.Agent-1) in a file that 10.0.0.9 sent for scanning.
+    counter_examples:
+      - "Thu Nov 19 08:26:10 2026 -> instream(172.18.0.7@33510): OK"
+
+  - id: clamav.scan.stream_clean
+    title: "Clean file from {{ client }}"
+    match:
+      field: raw
+      regex: 'instream\((?P<client>[^@)]+)@\d+\): OK\s*$'
+    template: A file that {{ client }} sent to ClamAV for scanning is clean.
+    category: info
+    severity_override: info
+    examples:
+      - line: "Thu Nov 19 08:26:10 2026 -> instream(172.18.0.7@33510): OK"
+        expect:
+          text: A file that 172.18.0.7 sent to ClamAV for scanning is clean.
+    counter_examples:
+      - "Thu Nov 19 08:26:10 2026 -> instream(10.0.0.9@41000): Win.Trojan.Agent-1 FOUND"
+
   - id: clamav.scan.eicar
     title: "Antivirus test file: {{ file }}"
     match:
       fields: {event: virus_found}
       field: signature
-      regex: EICAR
+      regex: (?i)eicar
     extract: [file]
     template: >-
       ClamAV detected the EICAR test file at {{ file }}. It is harmless: it exists only to check
       that the antivirus is working.
     action: Nothing to do if you or an admin put it there on purpose; delete it after the test.
     category: security
+    tags: [detection]
     severity_override: notice
     references: ["https://www.eicar.org/download-anti-malware-testfile/"]
     examples:
@@ -52,6 +122,7 @@ rules:
       necessarily malware, but software such as adware, a crack or a hacking tool.
     action: Check whether {{ file | shquote }} is software you intended to have; remove it if not.
     category: security
+    tags: [detection]
     severity_override: warning
     confidence: 0.7
     examples:
@@ -75,6 +146,7 @@ rules:
       Do not open {{ file | shquote }}. Move it to quarantine or delete it, then find out where it came
       from and scan the machine(s) that touched it.
     category: security
+    tags: [detection]
     severity_override: critical
     examples:
       - line: "Wed Nov 18 01:02:04 2026 -> /home/azik/Downloads/invoice.zip: Doc.Dropper.Agent-1540415 FOUND"
@@ -393,6 +465,7 @@ rules:
     extract: [database, version, signatures]
     template: freshclam downloaded a newer {{ database }} (version {{ version }}, {{ "{:,}".format(signatures) }} signatures).
     category: info
+    tags: [update]
     severity_override: info
     examples:
       - line: "Wed Nov 18 15:36:47 2026 -> daily.cld updated (version: 28187, sigs: 2074152, f-level: 90, builder: raynman)"
@@ -408,6 +481,7 @@ rules:
     extract: [database, version]
     template: freshclam checked {{ database }} and it is already the latest version ({{ version }}).
     category: info
+    tags: [update]
     severity_override: info
     examples:
       - line: "Wed Nov 18 15:36:47 2026 -> main.cvd database is up-to-date (version: 62, sigs: 6647427, f-level: 90, builder: sigmgr)"
@@ -423,6 +497,7 @@ rules:
     extract: [signatures, mirror]
     template: freshclam finished updating from {{ mirror }}; the database now has {{ "{:,}".format(signatures) }} signatures.
     category: info
+    tags: [update]
     severity_override: info
     examples:
       - line: "Wed Nov 18 18:36:46 2026 -> Database updated (8721665 signatures) from database.clamav.net (IP: 104.16.218.84)"
@@ -455,6 +530,7 @@ rules:
     cause: The DNS server cannot resolve TXT records, or outbound DNS is blocked.
     action: Usually harmless if the HTTP download that follows succeeds. If updates keep failing, test "dig TXT {{ host | shquote }}".
     category: availability
+    tags: [update_failure]
     severity_override: warning
     examples:
       - line: "Wed Nov 18 17:36:46 2026 -> ^Can't query current.cvd.clamav.net"
@@ -473,6 +549,7 @@ rules:
     cause: No internet access from this machine, a proxy or firewall blocking it, or the mirror is temporarily unavailable.
     action: Test with "curl -I {{ url | shquote }}". If you use a proxy, set HTTPProxyServer/HTTPProxyPort in freshclam.conf.
     category: availability
+    tags: [update_failure]
     severity_override: error
     examples:
       - line: "Wed Nov 18 17:36:50 2026 -> !Can't download daily.cvd from https://database.clamav.net/daily.cvd"
@@ -488,6 +565,7 @@ rules:
     template: The {{ database }} signature database was not updated; ClamAV keeps using the older copy.
     action: Look at the freshclam lines just above for the reason (download, DNS or rate limit).
     category: availability
+    tags: [update_failure]
     severity_override: error
     examples:
       - line: "Wed Nov 18 17:36:50 2026 -> !Update failed for database: daily"
@@ -504,6 +582,7 @@ rules:
     cause: Most often no network access to database.clamav.net (DNS, firewall, proxy) or a rate limit from the ClamAV servers.
     action: Run "sudo freshclam --verbose" to see the failing step; check the machine's internet and proxy settings.
     category: availability
+    tags: [update_failure]
     severity_override: error
     examples:
       - line: "Wed Nov 18 17:36:50 2026 -> ERROR: Database update process failed: Connection failed"
@@ -522,6 +601,7 @@ rules:
     cause: freshclam runs more often than allowed (more than about once an hour), or many machines share one public IP.
     action: Set "Checks 12" or lower in freshclam.conf, or run a local mirror (cvdupdate) for many machines.
     category: configuration
+    tags: [update_failure]
     severity_override: warning
     references: ["https://docs.clamav.net/faq/faq-cvd.html"]
     examples:
@@ -545,6 +625,7 @@ rules:
     template: The update mirror {{ mirror }} still had older signatures than announced; freshclam will retry.
     action: Harmless if it happens now and then; only act if updates stay stale for more than a day.
     category: availability
+    tags: [update_failure]
     severity_override: notice
     examples:
       - line: "Wed Nov 18 18:36:46 2026 -> ^Mirror https://database.clamav.net is not synchronized."
@@ -583,3 +664,38 @@ rules:
           text: This machine runs ClamAV 1.0.7; the current recommended version is 1.4.3.
     counter_examples:
       - "Wed Nov 18 18:36:45 2026 -> WARNING: Your ClamAV installation is OUTDATED!"
+
+  - id: clamav.update.download_error
+    title: "Update download failed: {{ reason }}"
+    match:
+      regex: 'Download failed \((?P<code>\d+)\).*?Message:\s*(?P<reason>\S.*?)\s*$'
+    template: "freshclam could not download from the update server: {{ reason }}."
+    cause: No DNS or internet from this machine, a firewall or proxy in the way, or a wrong DatabaseMirror in freshclam.conf.
+    action: Check DNS and internet access from this host, and the DatabaseMirror / proxy settings in freshclam.conf.
+    category: availability
+    severity_override: error
+    tags: [update_failure]
+    examples:
+      - line: "ERROR: Thu Nov 19 08:26:15 2026 -> remote_cvdhead: Download failed (6) ERROR: Thu Nov 19 08:26:15 2026 ->  Message: Could not resolve hostname"
+        expect:
+          text: "freshclam could not download from the update server: Could not resolve hostname."
+    counter_examples:
+      - "ERROR: Thu Nov 19 08:26:15 2026 -> Update failed for database: daily"
+
+  - id: clamav.update.version_check_failed
+    title: "Cannot check {{ database }} version"
+    match:
+      regex: Failed to get (?P<database>\w+) database version information from server:\s*(?P<server>\S+)
+    template: freshclam could not ask {{ server }} which version of the {{ database }} signatures is current.
+    action: Check that this host can reach {{ server | shquote }}; the reason is usually in the line just above.
+    category: availability
+    severity_override: warning
+    tags: [update_failure]
+    examples:
+      - line: "WARNING: Thu Nov 19 08:26:15 2026 -> Failed to get daily database version information from server: https://database.example.invalid"
+        expect:
+          text: >-
+            freshclam could not ask https://database.example.invalid which version of the daily
+            signatures is current.
+    counter_examples:
+      - "ERROR: Thu Nov 19 08:26:15 2026 -> Update failed for database: daily"

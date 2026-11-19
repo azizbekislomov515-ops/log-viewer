@@ -10,6 +10,12 @@ applies_to:
   paths: ["*compose*"]
   programs: [docker-compose, compose]
 
+overview:
+  cards:
+    - {title: Dependency problems, kind: recent, when: {tags: [dependency]}, limit: 6, empty: None.}
+    - {title: Configuration and build errors, kind: recent, when: {tags: [config, build]}, limit: 6,
+       warn_at: 1, empty: None.}
+
 rules:
   # ---------------------------------------------------------------- start-up order
   - id: compose.dependency.waiting
@@ -18,6 +24,7 @@ rules:
       regex: Container (?P<container>\S+)\s+Waiting\s*$
     template: Compose is holding back other services until {{ container }} is ready (depends_on with a condition).
     category: info
+    tags: [dependency]
     severity_override: info
     examples:
       - line: " Container shop-db-1  Waiting"
@@ -63,6 +70,7 @@ rules:
     cause: The service in {{ container }} is failing or slow to start, or its healthcheck test or timing is wrong.
     action: Check "docker compose logs {{ container | shquote }}" and its healthcheck (test, interval, retries, start_period).
     category: availability
+    tags: [dependency]
     severity_override: error
     examples:
       - line: "dependency failed to start: container shop-db-1 is unhealthy"
@@ -80,6 +88,7 @@ rules:
     template: Compose did not start the services that depend on {{ container }}, because {{ container }} stopped with exit code {{ code }}.
     action: See why it failed with "docker compose logs {{ container | shquote }}".
     category: availability
+    tags: [dependency]
     severity_override: error
     examples:
       - line: "dependency failed to start: container shop-migrate-1 exited (1)"
@@ -100,6 +109,7 @@ rules:
       (asked to stop){% else %} (an error){% endif %}.
     action: "{% if code != '0' and code != '143' %}Check its last output: docker compose logs --tail 50 {{ container | shquote }}{% endif %}"
     category: availability
+    tags: [exit]
     severity_override: warning
     examples:
       - line: "shop-web-1 exited with code 1"
@@ -189,6 +199,7 @@ rules:
       required{% if hint %} ("{{ hint }}"){% endif %}.
     action: Set {{ var | shquote }} in the .env file next to the compose file, or export it before running docker compose.
     category: configuration
+    tags: [config]
     severity_override: error
     examples:
       - line: "error while interpolating services.db.environment.POSTGRES_PASSWORD: required variable DB_PASSWORD is missing a value: set DB_PASSWORD in .env"
@@ -207,6 +218,7 @@ rules:
     cause: A missing or misnamed .env file, or the variable was never exported.
     action: Add {{ var | shquote }}=... to the .env file in the project directory; an empty value can break passwords, ports or image tags.
     category: configuration
+    tags: [config]
     severity_override: warning
     examples:
       - line: 'WARN[0000] The "DB_PASSWORD" variable is not set. Defaulting to a blank string.'
@@ -242,6 +254,7 @@ rules:
     template: docker compose found no compose.yaml / docker-compose.yml in the directory it ran from.
     action: Run it from the project directory, or point to the file with "docker compose -f /path/to/compose.yaml".
     category: configuration
+    tags: [config]
     severity_override: error
     examples:
       - line: "no configuration file provided: not found"
@@ -258,6 +271,7 @@ rules:
     cause: Usually wrong indentation, a tab character, or a value with ":" that needs quotes.
     action: Fix line {{ line | shquote }} (and the line above it), then check with "docker compose config".
     category: configuration
+    tags: [config]
     severity_override: error
     examples:
       - line: "yaml: line 12: mapping values are not allowed in this context"
@@ -273,6 +287,7 @@ rules:
     template: "{{ file }} has an invalid value at {{ where }}: it {{ problem }}."
     action: Fix {{ where | shquote }} in {{ file | shquote }}; "docker compose config" shows the parsed result.
     category: configuration
+    tags: [config]
     severity_override: error
     examples:
       - line: "validating /srv/shop/compose.yaml: services.web.ports.0 must be a string or number"
@@ -288,6 +303,7 @@ rules:
     template: The service {{ service }} lists {{ dependency }} under depends_on, but there is no service called {{ dependency }}.
     action: Fix the name under depends_on of {{ service | shquote }} (check spelling), or add the {{ dependency | shquote }} service.
     category: configuration
+    tags: [config]
     severity_override: error
     examples:
       - line: 'service "web" depends on undefined service "db": invalid compose project'
@@ -305,6 +321,7 @@ rules:
     template: Building the image failed because the Dockerfile command "{{ step }}" exited with code {{ code }}.
     action: Scroll up in the build output for that step's own error (a failed download, a missing package, a test failure).
     category: configuration
+    tags: [build]
     severity_override: error
     examples:
       - line: 'failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code: 1'
@@ -320,6 +337,7 @@ rules:
     template: The build could not find {{ file }} in the build context directory.
     action: Check "build.context" and "build.dockerfile" for this service in the compose file.
     category: configuration
+    tags: [build]
     severity_override: error
     examples:
       - line: "failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory"
@@ -335,6 +353,7 @@ rules:
     template: The build folder {{ path }} given for a service does not exist.
     action: Fix "build:" (or build.context) for that service; paths are relative to the compose file.
     category: configuration
+    tags: [build]
     severity_override: error
     examples:
       - line: 'unable to prepare context: path "./api" not found'

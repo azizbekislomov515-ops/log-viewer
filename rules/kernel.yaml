@@ -8,6 +8,15 @@ applies_to:
   programs: [kernel]
   paths: ["/var/log/kern.log*", "/var/log/dmesg*"]
 
+overview:
+  cards:
+    - {title: Blocked by the firewall (source), kind: top, field: src, when: {tags: [firewall]}}
+    - {title: Blocked ports, kind: top, field: dpt, when: {tags: [firewall]}}
+    - {title: Out-of-memory kills, kind: recent, when: {tags: [oom]}, columns: [process], warn_at: 1,
+       empty: No process was killed for memory.}
+    - {title: Disk and filesystem errors, kind: recent, when: {tags: [disk]}, warn_at: 1, empty: None.}
+    - {title: Crashing programs, kind: top, field: process, when: {tags: [crash]}}
+
 rules:
   # ---------------------------------------------------------------- memory
   - id: kernel.oom.cgroup_kill
@@ -19,6 +28,7 @@ rules:
       used up its own memory limit; the machine itself still had memory.
     action: Raise the memory limit of that container/service (docker --memory, MemoryMax=) or reduce what {{ process | shquote }} uses.
     category: performance
+    tags: [oom]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali kernel: [12345.678901] Memory cgroup out of memory: Killed process 4321 (java) total-vm:8123456kB, anon-rss:1012345kB, file-rss:0kB"
@@ -39,6 +49,7 @@ rules:
       to keep the system running.
     action: Find what used the memory (often {{ process | shquote }} itself); add RAM or swap, or limit that program's memory.
     category: availability
+    tags: [oom]
     severity_override: critical
     references: ["https://www.kernel.org/doc/gorman/html/understand/understand016.html"]
     examples:
@@ -78,6 +89,7 @@ rules:
     cause: A bug in the program or a library; repeated crashes in different programs can also mean faulty RAM.
     action: Update the package that provides {{ process | shquote }}; if many different programs segfault, test the RAM (memtest86+).
     category: availability
+    tags: [crash]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali kernel: [ 4567.123456] php-fpm8.2[2345]: segfault at 0 ip 000055d4c1f2a3b0 sp 00007ffd2c0e1a20 error 4 in php-fpm8.2[55d4c1e00000+3c0000]"
@@ -96,6 +108,7 @@ rules:
     cause: A program bug, or a binary built for a newer CPU than this one (invalid opcode).
     action: Update {{ process | shquote }}; for "invalid opcode", check that the program supports this CPU.
     category: availability
+    tags: [crash]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali kernel: [ 4567.123456] traps: node[3456] general protection fault ip:55d4c1f2a3b0 sp:7ffd2c0e1a20 error:0 in node[55d4c1e00000+3c0000]"
@@ -112,6 +125,7 @@ rules:
     cause: A very slow or failing disk, a hung NFS/CIFS server, or heavy I/O load.
     action: Check disk health and load ("iostat -x 1", "dmesg" for disk errors) and any network mounts.
     category: performance
+    tags: [disk]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali kernel: [ 7200.000001] INFO: task jbd2/sda1-8:312 blocked for more than 120 seconds."
@@ -147,6 +161,7 @@ rules:
     cause: A failing disk, a bad cable or connector, or a disconnected USB/virtual disk.
     action: Check the disk's health ("sudo smartctl -a /dev/{{ device | shquote }}") and back up important data now.
     category: availability
+    tags: [disk]
     severity_override: critical
     examples:
       - line: "Nov 18 10:00:00 kali kernel: [ 8000.000001] blk_update_request: I/O error, dev sda, sector 123456789 op 0x0:(READ) flags 0x0 phys_seg 1 prio class 0"
@@ -165,6 +180,7 @@ rules:
     cause: A loose or bad SATA cable, a weak power supply, or a disk that is starting to fail.
     action: If this repeats, reseat/replace the cable and check the disk with "sudo smartctl -a".
     category: availability
+    tags: [disk]
     severity_override: error
     confidence: 0.7
     examples:
@@ -181,6 +197,7 @@ rules:
     template: The filesystem on {{ device }} hit an error and was made read-only to protect the data; programs can no longer write there.
     action: Back up what you can, then run a filesystem check (fsck) on {{ device | shquote }} from a rescue boot, and check the disk's health.
     category: availability
+    tags: [disk]
     severity_override: critical
     examples:
       - line: "Nov 18 10:00:00 kali kernel: [ 8000.000001] EXT4-fs (sda1): Remounting filesystem read-only"
@@ -199,6 +216,7 @@ rules:
     cause: An unclean shutdown, a failing disk, or (rarely) a kernel bug.
     action: Check the disk's health and schedule a filesystem check (fsck / xfs_repair) on {{ (device or xfs) | shquote }} while it is unmounted.
     category: availability
+    tags: [disk]
     severity_override: error
     examples:
       - line: "Nov 18 10:00:00 kali kernel: [ 8000.000001] EXT4-fs error (device sda1): ext4_find_entry:1455: inode #2: comm ls: reading directory lblock 0"
@@ -218,6 +236,7 @@ rules:
     cause: Usually internet scanners knocking on closed ports; nothing got through.
     action: Nothing to do unless {{ src | shquote }} is one of your own machines that should be allowed; then add a "ufw allow" rule.
     category: security
+    tags: [firewall]
     severity_override: info
     examples:
       - line: "Nov 18 10:00:00 kali kernel: [12345.678901] [UFW BLOCK] IN=eth0 OUT= MAC=aa:bb:cc:dd:ee:ff SRC=203.0.113.5 DST=10.0.0.2 LEN=60 TOS=0x00 PREC=0x00 TTL=50 ID=1 DF PROTO=TCP SPT=4444 DPT=22 WINDOW=1 RES=0x00 SYN URGP=0"
@@ -236,6 +255,7 @@ rules:
       {{ dst }}{% if dpt %} port {{ dpt }}{% endif %}.
     action: Nothing to do if this traffic should be blocked; otherwise adjust the iptables/nftables rule that logs "{{ prefix | trim | shquote }}".
     category: security
+    tags: [firewall]
     severity_override: info
     examples:
       - line: "Nov 18 10:00:00 kali kernel: [12345.678901] IPTABLES-DROP: IN=eth0 OUT= MAC=aa:bb SRC=198.51.100.7 DST=10.0.0.2 LEN=40 TOS=0x00 PREC=0x00 TTL=240 ID=54321 PROTO=TCP SPT=40000 DPT=3389 WINDOW=1024 RES=0x00 SYN URGP=0"
@@ -318,6 +338,7 @@ rules:
     template: The CPU reported a hardware error (Machine Check). This points to faulty RAM, CPU, or overheating, not software.
     action: Install rasdaemon or mcelog for details; run a memory test; check temperatures and the vendor's firmware updates.
     category: availability
+    tags: [hardware]
     severity_override: critical
     examples:
       - line: "Nov 18 10:00:00 kali kernel: [12345.678901] mce: [Hardware Error]: Machine check events logged"
