@@ -207,3 +207,35 @@ def test_values_that_start_with_a_key_word_are_redacted_whole(
     redacted, _ = Redactor().redact(f"login {key}={value} ok")
     assert value not in redacted and secret not in redacted
     assert inner not in redacted.split("=", 1)[1]  # no prefix of the secret remains
+
+
+@pytest.mark.parametrize(
+    ("line", "secret"),
+    [
+        ("mysql pwd=Hunter2x", "Hunter2x"),
+        ("GET /api/token=abc123def", "abc123def"),
+        ("GET /oauth/secret:s3cr3tval", "s3cr3tval"),
+        ("uatp 1234 5678 9012 346", None),  # placeholder replaced below
+        ("card 4000000000000002 ok", "4000000000000002"),
+        ("card 2221000000000009 ok", "2221000000000009"),
+    ],
+)
+def test_narrow_exclusions_do_not_hide_real_secrets(line: str, secret: str | None) -> None:
+    if secret is None:  # a 15-digit card starting with 1 (UATP-style), Luhn-valid
+        body = "10000000000000"
+        secret = body + next(str(d) for d in range(10) if luhn_ok(body + str(d)))
+        line = f"uatp {secret} ok"
+    assert secret not in Redactor().redact(line)[0]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "sudo: azik : TTY=pts/0 ; PWD=/home/azik ; USER=root ; COMMAND=/usr/bin/id",
+        "/root/secret: Access denied. ERROR",
+        '{"time":1795076810563,"msg":"x"}',
+        '{"ts":1795076810563123,"msg":"x"}',
+    ],
+)
+def test_common_log_shapes_are_not_redacted(line: str) -> None:
+    assert Redactor().redact(line) == (line, 0)

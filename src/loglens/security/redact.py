@@ -55,12 +55,20 @@ _DIGITS13 = re.compile(r"\d(?:[ -]?\d){12}")
 _RUN32 = re.compile(r"[A-Za-z0-9+/_=-]{32}")
 
 
+#: Epoch seconds 2000-01-01 .. 2040-01-01: a ms/us/ns timestamp in this range is a
+#: timestamp, not a card (they pass Luhn one time in ten).
+_EPOCH_RANGE = range(946_684_800, 2_208_988_800)
+
+
+def _looks_like_epoch(digits: str) -> bool:
+    """A contiguous 13/16/19-digit number whose first 10 digits are a plausible epoch."""
+    return digits.isdigit() and len(digits) in (13, 16, 19) and int(digits[:10]) in _EPOCH_RANGE
+
+
 def luhn_ok(digits: str) -> bool:
     """Whether a 13-19 digit number passes the Luhn checksum (card numbers do)."""
     nums = [int(d) for d in digits if d.isdigit()]
-    # Issuers start at 2-6 (Mastercard 2/5, Amex 3, Visa 4, Discover 6); epoch timestamps
-    # in ms/us start with 1 and pass Luhn one time in ten.
-    if not 13 <= len(nums) <= 19 or len(set(nums)) == 1 or not 2 <= nums[0] <= 6:
+    if not 13 <= len(nums) <= 19 or len(set(nums)) == 1 or _looks_like_epoch(digits):
         return False
     total = 0
     for i, digit in enumerate(reversed(nums)):
@@ -87,7 +95,9 @@ def looks_random(token: str) -> bool:
 
 
 _KEY_WORDS = (
-    r"pass(?:word|wd|phrase)?|secret|client[_-]?secret|token|access[_-]?token|"
+    # "pwd" except before a path: sudo's PWD=/home/... is the working directory.
+    r"pass(?:word|wd|phrase)?|pwd(?![\"']?\s*[:=]\s*/)|secret|client[_-]?secret|token|"
+    r"access[_-]?token|"
     r"refresh[_-]?token|auth[_-]?token|api[_-]?key|apikey|private[_-]?key"
 )
 #: Before a captured value: it may not itself be a key ("password= passwd: x" takes x),
@@ -136,13 +146,14 @@ _PATTERNS = (
         # takes x); directly after the separator anything is the value ("pwd=token:x").
         # Long key words match inside identifiers (db_password, adminPassword, x-token);
         # short ones (pass, pwd, key) only after a separator ("bypass=on" stays).
-        # Not after "/": "/root/secret: Access denied" is a path. (No "pwd": in logs it
-        # is the working directory, e.g. sudo's PWD=/home/...)
-        rf"(?i)(?<!/)(?:pass(?:word|wd|phrase)|secret|token|api[_-]?key|access[_-]?key"
+        # A path component followed by ": " is a file name in a message ("/root/secret:
+        # Access denied"), not a key; "/token=x" and "/secret:x" are still redacted.
+        rf"(?i)(?!(?<=/)[\w.-]+:\s)(?:pass(?:word|wd|phrase)|secret|token|api[_-]?key"
+        rf"|access[_-]?key"
         rf"|private[_-]?key|(?<![a-z0-9])(?:{_KEY_WORDS}))"
         rf"[\"']?\s*[:=](?:\s+[\"']?{_NOT_A_KEY}|[\"']?)"
         rf"(?P<s>[^\s\"'&,;]{{3,256}})"),
-        words=("pass", "secret", "token", "key")),
+        words=("pass", "pwd", "secret", "token", "key")),
     _Pattern("credit_card", re.compile(r"(?<![\d-])(?P<s>\d(?:[ -]?\d){12,18})(?![\d-])"),
              luhn_ok, probe=_DIGITS13),
     # Not after "SHA256:" / "MD5:": key fingerprints are public and identify the key.
