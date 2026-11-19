@@ -1,6 +1,3 @@
-# Draft desktop entry (Phase 9 packaging installs it to /usr/share/applications and
-# ships a real icon; until then the themed "utilities-log-viewer" icon is used).
-# Validate with: desktop-file-validate packaging/loglens.desktop
 [Desktop Entry]
 Type=Application
 Version=1.5
@@ -9,7 +6,7 @@ GenericName=Log Viewer
 Comment=See every service's logs and what they mean
 Exec=loglens
 TryExec=loglens
-Icon=utilities-log-viewer
+Icon=org.loglens.LogLens
 Terminal=false
 Categories=System;Monitor;
 Keywords=log;logs;journal;journald;systemd;docker;compose;syslog;squid;nginx;clamav;

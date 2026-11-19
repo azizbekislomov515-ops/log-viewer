@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+if [ "$1" = "configure" ]; then
+    # The helper's system user (the service itself stays disabled until an admin
+    # enables it: systemctl enable --now loglens-helper.socket).
+    if command -v systemd-sysusers >/dev/null 2>&1; then
+        systemd-sysusers loglens-helper.conf || true
+    elif ! getent passwd loglens-helper >/dev/null; then
+        useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin \
+            --user-group loglens-helper || true
+        for group in systemd-journal adm; do
+            getent group "$group" >/dev/null && usermod -aG "$group" loglens-helper || true
+        done
+    fi
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload || true
+    fi
+fi
+exit 0

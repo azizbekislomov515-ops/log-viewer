@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+# The loglens-helper system user is kept on purge (Debian policy: never reuse a uid).
+exit 0

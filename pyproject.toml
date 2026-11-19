@@ -52,6 +52,7 @@ packages = ["src/loglens"]
 "rules" = "loglens/_data/rules"
 "tests/fixtures/logs" = "loglens/_data/demo_logs"
 "demo" = "loglens/_data/demo_stack"
+"packaging/share" = "loglens/_data/share"
 
 [tool.ruff]
 line-length = 100

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from loglens.collectors.discovery.base import Discoverer
@@ -26,6 +27,7 @@ from loglens.gui import theme as themes
 from loglens.gui.backend import Backend
 from loglens.gui.main_window import MainWindow, session_path
 from loglens.gui.workers import DbWorker
+from loglens.resources import APP_ID, data_path
 from loglens.storage import default_db_path
 
 log = logging.getLogger(__name__)
@@ -65,10 +67,13 @@ def launch(
     With ``start=False`` the caller connects to the backend's signals first and then calls
     ``backend.start()``; signals emitted before anyone listens are lost.
     """
-    app = QApplication.instance() or QApplication(sys.argv[:1])
+    # A fixed argv[0]: the X11 window class must be "loglens" even when started via
+    # "python -c" (the packaged launchers), so docks match the desktop entry.
+    app = QApplication.instance() or QApplication(["loglens"])
     assert isinstance(app, QApplication)  # noqa: S101
     app.setApplicationName("LogLens")
-    app.setDesktopFileName("loglens")
+    app.setDesktopFileName(APP_ID)  # Wayland app id = desktop entry name
+    app.setWindowIcon(QIcon.fromTheme(APP_ID, QIcon(str(data_path("share") / f"{APP_ID}.svg"))))
     theme = themes.resolve(settings.theme)
     themes.apply(app, theme)
     if demo:
