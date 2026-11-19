@@ -23,6 +23,9 @@ def test_round_trip_is_private_and_exact(tmp_path: Path) -> None:
         discovery_exclude=("systemd:*.scope",),
         discovery_interval_s=60,
         pinned=("systemd:ssh.service",),
+        inline_explanations="full",
+        notify_on=("detection",),
+        muted=("docker:noisy",),
     )
     save_settings(settings, path)
     assert load_settings(path) == settings
@@ -38,6 +41,7 @@ def test_round_trip_is_private_and_exact(tmp_path: Path) -> None:
         "[storage]\nretention_days = -1\nmax_rows_per_source = 'many'\n",
         "[rules]\nrule_dirs = [1, 2]\n",
         "[storage]\nretention_days = true\n",
+        "[appearance]\ninline_explanations = 'loud'\n",
     ],
 )
 def test_bad_values_fall_back_to_defaults(tmp_path: Path, text: str) -> None:

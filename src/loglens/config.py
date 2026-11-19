@@ -21,6 +21,8 @@ from loglens.storage import RetentionPolicy
 log = logging.getLogger(__name__)
 
 THEMES = ("system", "light", "dark")
+#: How explanations show under log rows: not at all, the title only, or the full sentence.
+INLINE_MODES = ("off", "compact", "full")
 
 
 def config_dir() -> Path:
@@ -47,6 +49,11 @@ class Settings:
     discovery_interval_s: int = 30
     #: Sources followed in the background (unread badges) even without an open tab.
     pinned: tuple[str, ...] = field(default=())
+    inline_explanations: str = "off"
+    #: Desktop notification conditions (see ``gui.notify.CONDITIONS``).
+    notify_on: tuple[str, ...] = ("critical", "detection", "restart_loop")
+    #: Sources that never raise desktop notifications.
+    muted: tuple[str, ...] = ()
 
     @property
     def retention(self) -> RetentionPolicy:
@@ -85,6 +92,8 @@ def load_settings(path: Path | None = None) -> Settings:
             settings = replace(settings, **{f.name: value})
     if settings.theme not in THEMES:
         settings = replace(settings, theme="system")
+    if settings.inline_explanations not in INLINE_MODES:
+        settings = replace(settings, inline_explanations="off")
     return settings
 
 
@@ -93,10 +102,11 @@ def save_settings(settings: Settings, path: Path | None = None) -> Path:
     path = path or default_config_path()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     sections = {
-        "appearance": ("theme",),
+        "appearance": ("theme", "inline_explanations"),
         "storage": ("retention_days", "max_rows_per_source"),
         "rules": ("rule_dirs",),
         "discovery": ("discovery_exclude", "discovery_interval_s", "pinned"),
+        "notifications": ("notify_on", "muted"),
     }
     lines = ["# LogLens settings. Edited by Settings in the app; safe to edit by hand.", ""]
     for section, keys in sections.items():
