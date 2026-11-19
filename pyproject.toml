@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 loglens-cli = "loglens.cli:main"
+loglens-helper = "loglens.helper.server:main"
 
 [project.gui-scripts]
 loglens = "loglens.gui.app:main"

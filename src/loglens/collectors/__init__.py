@@ -15,11 +15,14 @@ def default_collectors() -> dict[SourceKind, Collector]:
     from loglens.collectors.docker_logs import DockerCollector  # noqa: PLC0415
     from loglens.collectors.files import FileCollector  # noqa: PLC0415
     from loglens.collectors.journald import JournaldCollector  # noqa: PLC0415
+    from loglens.helper.client import HelperFallback  # noqa: PLC0415
 
+    # Journal and files go through loglens-helper when this user cannot read them and
+    # the helper is installed; otherwise directly.
     return {
-        SourceKind.SYSTEMD: JournaldCollector(),
+        SourceKind.SYSTEMD: HelperFallback(JournaldCollector()),
         SourceKind.DOCKER_CONTAINER: DockerCollector(),
-        SourceKind.FILE: FileCollector(),
+        SourceKind.FILE: HelperFallback(FileCollector()),
     }
 
 

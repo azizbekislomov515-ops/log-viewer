@@ -1,0 +1,13 @@
+[Unit]
+Description=LogLens read-only log helper (socket)
+Documentation=file:///usr/share/doc/loglens/SECURITY.md
+
+[Socket]
+ListenStream=/run/loglens-helper.sock
+# Anyone may connect; the helper authorizes every peer itself (SO_PEERCRED +
+# allow_groups / polkit) and serves only sources listed in /etc/loglens/helper.toml.
+SocketMode=0666
+Accept=no
+
+[Install]
+WantedBy=sockets.target
