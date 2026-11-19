@@ -564,3 +564,8 @@ def test_hostile_log_values_stay_one_shell_word(
     assert got is not None
     assert got.rule_id == rule_id
     assert quoted in (got.suggested_action or "")
+
+
+def test_yml_packs_are_loaded_too(tmp_path: Path) -> None:
+    (tmp_path / "demo.yml").write_text(HEADER + rule("x", "{regex: x}", "t"))
+    assert [r.id for r in load_rules(tmp_path).rules] == ["demo.x"]

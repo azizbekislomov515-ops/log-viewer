@@ -265,7 +265,7 @@ class RuleSet:
 def load_rules(
     directory: Path | Sequence[Path] | None = None, *, packs: Iterable[str] | None = None
 ) -> RuleSet:
-    """Load every ``*.yaml`` pack in ``directory`` (default: the repo's ``rules/``), or in
+    """Load every ``*.yaml`` / ``*.yml`` pack in ``directory`` (default: the built-in packs), or in
     several directories in order (built-in packs first, then user packs).
 
     ``packs`` limits loading to those pack names. Duplicate rule ids across packs: the
@@ -286,7 +286,7 @@ def load_rules(
         if not folder.is_dir():
             issues.append(LoadIssue(folder, 0, "rules directory not found"))
             continue
-        for path in sorted(folder.glob("*.yaml")):
+        for path in sorted([*folder.glob("*.yaml"), *folder.glob("*.yml")]):
             if path.name in NOT_PACKS:
                 continue
             trusted = folder.resolve() == DEFAULT_RULES_DIR.resolve()

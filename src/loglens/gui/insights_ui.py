@@ -19,6 +19,7 @@ from PySide6.QtCore import QModelIndex, Qt
 from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import QDockWidget, QFileDialog, QWidget
 
+from loglens.config import data_dir
 from loglens.core.models import Explanation, LogEntry, LogSource
 from loglens.explain import ExplanationEngine
 from loglens.explain.editor import user_rules_dir
@@ -33,7 +34,7 @@ from loglens.gui.analyst import (
 from loglens.gui.dialogs import ExportDialog, RuleEditorDialog
 from loglens.gui.insight_widgets import ComposeDashboard, ExplainPanel, OverviewPage
 from loglens.gui.notify import DesktopNotifier, NotificationCenter
-from loglens.security.redact import Redactor
+from loglens.security.redact import Redactor, SecretVault
 from loglens.storage import Storage
 
 if TYPE_CHECKING:
@@ -364,7 +365,22 @@ class Insights:
             create = QAction("Create rule from this line…", view)
             create.triggered.connect(lambda: self.create_rule(entry))
             actions.append(create)
+        if entry is not None and "redacted" in entry.fields and self.w.settings.redact_reversible:
+            reveal = QAction("Copy line with secrets revealed", view)
+            reveal.setToolTip("Only on this computer: uses the local vault (Settings > Secrets)")
+            reveal.triggered.connect(lambda: self.copy_revealed(entry))
+            actions.append(reveal)
         return actions
+
+    def copy_revealed(self, entry: LogEntry) -> None:
+        """Explicit, local reveal: the raw line with kept secrets put back, to the clipboard."""
+        vault_dir = data_dir() / "vault"
+        if not (vault_dir / "vault.key").exists():
+            self.w.statusBar().showMessage("No secrets were kept for this line", 6000)
+            return
+        text = SecretVault(vault_dir).reveal(entry.raw)
+        QGuiApplication.clipboard().setText(text)
+        self.w.statusBar().showMessage("Copied with secrets revealed; handle with care", 6000)
 
     # ------------------------------------------------------------------ notifications
 

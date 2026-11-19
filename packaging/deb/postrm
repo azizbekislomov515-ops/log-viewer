@@ -3,5 +3,10 @@ set -e
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload >/dev/null 2>&1 || true
 fi
+# Bytecode caches Python may have written under /opt/loglens (not files dpkg installed).
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    find /opt/loglens -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+    find /opt/loglens -depth -type d -empty -delete 2>/dev/null || true
+fi
 # The loglens-helper system user is kept on purge (Debian policy: never reuse a uid).
 exit 0

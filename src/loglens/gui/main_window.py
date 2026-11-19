@@ -1037,14 +1037,14 @@ class MainWindow(QMainWindow):
         self.set_degraded(
             "disk",
             f"Disk budget reached: the oldest {trimmed:,} entries were deleted to stay under "
-            f"{self.settings.disk_budget_mb:,} MB (Settings > Limits)."
+            f"{self.settings.disk_budget_mb:,} MB (Settings: Disk budget)."
             if trimmed
             else None,
         )
         self.set_degraded(
             "collectors",
             f"Collector limit reached: {len(refused)} source(s) are not followed "
-            f"(limit {self.settings.max_collectors}; Settings > Limits)."
+            f"(limit {self.settings.max_collectors}; Settings: Follow at most)."
             if refused
             else None,
         )

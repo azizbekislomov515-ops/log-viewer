@@ -23,13 +23,20 @@ case "$(basename "${ARGV0:-loglens}")" in
     loglens-cli*) module=loglens.cli ;;
     *) module=loglens.gui.app ;;
 esac
-exec "$HERE/opt/loglens/python/bin/python3.12" -I -c "import sys; from $module import main; sys.exit(main())" "$@"
+exec "$HERE/opt/loglens/python/bin/python3.12" -I -B -c "import sys; from $module import main; sys.exit(main())" "$@"
 APPRUN
 chmod 0755 "$APPDIR/AppRun"
-tool="${APPIMAGETOOL:-build/appimagetool-x86_64.AppImage}"
-if [ ! -x "$tool" ]; then
-    curl -fsSL -o "$tool" \
-        https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+# appimagetool is downloaded from a pinned release and run only if its SHA-256 matches
+# APPIMAGETOOL_SHA256 (set it after verifying the release yourself; CI stores it as a
+# repository variable). Or point APPIMAGETOOL at a copy you already trust.
+APPIMAGETOOL_VERSION="${APPIMAGETOOL_VERSION:-1.9.0}"
+tool="${APPIMAGETOOL:-build/appimagetool-$APPIMAGETOOL_VERSION-x86_64.AppImage}"
+if [ -z "${APPIMAGETOOL:-}" ]; then
+    : "${APPIMAGETOOL_SHA256:?set APPIMAGETOOL_SHA256 to the verified checksum of appimagetool $APPIMAGETOOL_VERSION}"
+    [ -f "$tool" ] || curl -fsSL -o "$tool" \
+        "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_VERSION/appimagetool-x86_64.AppImage"
+    echo "$APPIMAGETOOL_SHA256  $tool" | sha256sum -c - >/dev/null \
+        || { rm -f "$tool"; echo "appimagetool checksum mismatch" >&2; exit 1; }
     chmod +x "$tool"
 fi
 mkdir -p dist

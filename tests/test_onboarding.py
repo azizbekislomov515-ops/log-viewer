@@ -87,3 +87,28 @@ def test_dismissing_the_wizard_still_marks_onboarded(
     wizard.reject()
     qtbot.waitUntil(lambda: window.settings.onboarded)
     assert window.settings.pinned == ()
+
+
+def test_reveal_action_copies_the_original_line_locally(
+    env: tuple[MainWindow, StubBackend, object],
+    qtbot: QtBot,
+    tmp_path: Path,
+    monkeypatch: object,
+) -> None:
+    from dataclasses import replace  # noqa: PLC0415
+
+    from PySide6.QtGui import QGuiApplication  # noqa: PLC0415
+
+    from loglens.gui import insights_ui  # noqa: PLC0415
+    from loglens.security.redact import Redactor, SecretVault  # noqa: PLC0415
+    from tests.test_gui_window import entry  # noqa: PLC0415
+
+    window, _, _ = env
+    monkeypatch.setattr(insights_ui, "data_dir", lambda: tmp_path)  # type: ignore[attr-defined]
+    redacted = Redactor(vault=SecretVault(tmp_path / "vault")).redact_entry(
+        entry("systemd:ssh.service", 1, message="login password=Hunter2x ok")
+    )
+    assert "Hunter2x" not in redacted.raw
+    window.settings = replace(window.settings, redact_reversible=True)
+    window.insights.copy_revealed(redacted)
+    assert QGuiApplication.clipboard().text() == "login password=Hunter2x ok"

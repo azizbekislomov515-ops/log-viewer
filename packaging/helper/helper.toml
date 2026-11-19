@@ -13,7 +13,8 @@ files = [
   "/var/log/auth.log",
 ]
 
-# Members of these groups are allowed without a password prompt.
+# Members of these groups are allowed without a password prompt. The package creates
+# the "loglens" group: sudo usermod -aG loglens USER (then log out and back in).
 allow_groups = ["loglens"]
 
 # Everyone else: ask polkit (an administrator password, remembered for a while).

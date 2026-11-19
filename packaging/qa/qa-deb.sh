@@ -71,7 +71,7 @@ stat -c '%a %n' /home/qa/.local/share/loglens/loglens.db | grep -q '^600 ' || fa
 
 step "GUI: first-run guide, window, explanations, clean exit"
 mkdir -p /tmp/qa-out && chmod 777 /tmp/qa-out
-as_qa "QT_QPA_PLATFORM=offscreen /opt/loglens/python/bin/python3.12 -I /qa/gui_check.py /tmp/qa-out file:/var/log/nginx/access.log" | tee /tmp/gui.txt
+as_qa "QT_QPA_PLATFORM=offscreen /opt/loglens/python/bin/python3.12 -I -B /qa/gui_check.py /tmp/qa-out file:/var/log/nginx/access.log" | tee /tmp/gui.txt
 grep -q "exit=0" /tmp/gui.txt || fail "GUI check failed"
 cp /tmp/qa-out/*.png /dist/ 2>/dev/null || true
 

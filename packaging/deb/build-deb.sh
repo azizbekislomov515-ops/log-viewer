@@ -110,15 +110,16 @@ while True:  # drop plugins whose libraries are gone, until nothing changes
 TRIM
 find "$APP" -name "__pycache__" -type d -prune -exec rm -rf {} +
 # Byte-compile once, so nothing is written under /opt at run time and startup is fast.
-"$PY" -m compileall -q -j 0 -x 'lib2to3|test' "$APP/python/lib" >/dev/null || true
+"$PY" -m compileall -q -j 0 -x '/(test|lib2to3)/' "$APP/python/lib" >/dev/null || true
 
-# 4. Launchers: isolated mode (-I) ignores PYTHONPATH, user site-packages and the cwd.
+# 4. Launchers: isolated mode (-I) ignores PYTHONPATH, user site-packages and the cwd;
+#    -B never writes bytecode (all of it was compiled above), so /opt stays as installed.
 mkdir -p "$STAGE/usr/bin"
 for pair in "loglens:loglens.gui.app" "loglens-cli:loglens.cli" "loglens-helper:loglens.helper.server"; do
     name="${pair%%:*}" module="${pair#*:}"
     cat > "$STAGE/usr/bin/$name" <<LAUNCHER
 #!/bin/sh
-exec /opt/loglens/python/bin/python$PYTHON_VERSION -I -c 'import sys; from $module import main; sys.exit(main())' "\$@"
+exec /opt/loglens/python/bin/python$PYTHON_VERSION -I -B -c 'import sys; from $module import main; sys.exit(main())' "\$@"
 LAUNCHER
     chmod 0755 "$STAGE/usr/bin/$name"
 done
