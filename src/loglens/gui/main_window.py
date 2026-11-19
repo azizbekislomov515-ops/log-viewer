@@ -15,7 +15,7 @@ import os
 import time
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -39,6 +39,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
     QDockWidget,
     QFrame,
     QHBoxLayout,
@@ -64,6 +65,7 @@ from loglens.gui import theme as themes
 from loglens.gui.insights_ui import Insights
 from loglens.gui.log_model import Column, LogTableModel, SearchSpec, plain_tooltip
 from loglens.gui.log_view import LogView
+from loglens.gui.onboarding import OnboardingWizard
 from loglens.gui.source_tree import NodeKind, SourceTreeModel, TreeRole
 from loglens.gui.widgets import (
     CommandPalette,
@@ -561,6 +563,7 @@ class MainWindow(QMainWindow):
             density.addAction(label, functools.partial(self.insights.set_inline_mode, mode))
         menu.addAction("Explain panel", QKeySequence("Ctrl+E"), self.toggle_explain_panel)
         menu.addSeparator()
+        menu.addAction("Getting started…", self.show_onboarding)
         menu.addAction("Clear all data…", self.clear_all_data)
         menu_btn.setMenu(menu)
         menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -1073,6 +1076,37 @@ class MainWindow(QMainWindow):
             f"caches cleared and the oldest {dropped:,} loaded rows unloaded. They are still "
             "stored; reopen the tab or search to see them.",
         )
+
+    def show_onboarding(self) -> OnboardingWizard:
+        """The first-run guide (non-blocking; follows discovery while it is open)."""
+        wizard = OnboardingWizard(self.settings, self._groups, self._issues, self)
+        self.backend.sourcesChanged.connect(wizard.update_sources)
+
+        def finished(result: int) -> None:
+            self.backend.sourcesChanged.disconnect(wizard.update_sources)
+            accepted = result == QDialog.DialogCode.Accepted
+            self.apply_onboarding(
+                wizard.result_settings() if accepted else replace(self.settings, onboarded=True)
+            )
+            wizard.deleteLater()
+
+        wizard.finished.connect(finished)
+        wizard.open()
+        self.onboarding = wizard
+        return wizard
+
+    def apply_onboarding(self, new: Settings) -> None:
+        """Use and save the settings chosen in the guide."""
+        old, self.settings = self.settings, new
+        self._save_settings()
+        self.tree_model.set_pinned(new.pinned)
+        if new.discovery_exclude != old.discovery_exclude:
+            self.tree_model.update(self._groups, new.excluded)
+            self.backend.refresh_discovery()
+        for source_id in new.pinned:
+            source = self.tree_model.source(source_id)
+            if source is not None and not self._follow_refs[source_id]:
+                self._follow(source)
 
     def clear_all_data(self, *, confirm: bool = True) -> None:
         """Delete every stored entry (and the reveal vault), after asking."""

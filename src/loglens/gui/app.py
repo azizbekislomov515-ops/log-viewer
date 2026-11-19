@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from loglens.collectors.discovery.base import Discoverer
@@ -180,6 +181,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         launched.backend.sourcesChanged.connect(open_requested)
     launched.backend.start()
     launched.window.show()
+    if not settings.onboarded and not args.demo:
+        QTimer.singleShot(0, launched.window.show_onboarding)
     try:
         return launched.app.exec()
     finally:

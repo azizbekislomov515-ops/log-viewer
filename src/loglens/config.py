@@ -71,6 +71,8 @@ class Settings:
     memory_budget_mb: int = 1024
     disk_budget_mb: int = 2048
     max_collectors: int = 64
+    #: The first-run guide was completed or dismissed.
+    onboarded: bool = False
 
     def redactor(self) -> Redactor:
         """The secret redactor these settings describe."""
@@ -132,6 +134,7 @@ def save_settings(settings: Settings, path: Path | None = None) -> Path:
         "notifications": ("notify_on", "muted"),
         "privacy": ("redact_secrets", "redact_patterns", "redact_reversible"),
         "limits": ("memory_budget_mb", "disk_budget_mb", "max_collectors"),
+        "app": ("onboarded",),
     }
     lines = ["# LogLens settings. Edited by Settings in the app; safe to edit by hand.", ""]
     for section, keys in sections.items():
