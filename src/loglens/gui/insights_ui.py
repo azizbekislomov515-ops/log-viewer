@@ -175,6 +175,7 @@ class Insights:
                 s.id for s in sources
             ):
                 self.w.tabs.setCurrentWidget(page)
+                self.w._to_sources()
                 return page
         name = title or (sources[0].display_name if len(sources) == 1 else "group")
         model = OverviewModel(self.w.analytics, self.analyst, name, sources, parent=self.w)
@@ -194,6 +195,7 @@ class Insights:
         for page in self._pages:
             if isinstance(page, ComposeDashboard) and page.model.title == group.name:
                 self.w.tabs.setCurrentWidget(page)
+                self.w._to_sources()
                 return page
         model = ComposeModel(
             self.w.analytics, self.analyst, group.name, list(group.sources), parent=self.w
@@ -217,6 +219,7 @@ class Insights:
         self.w._add_close_button(index, page, title)
         self.w.tabs.setCurrentIndex(index)
         self.w.stack.setCurrentWidget(self.w.tabs)
+        self.w._to_sources()
 
     def _close_page(self, page: QWidget) -> bool:
         if page not in self._pages:

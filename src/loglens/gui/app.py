@@ -115,6 +115,7 @@ def launch(
         analytics=analytics,
     )
     window.apply_theme(theme)
+    window.show_page("overview")
     if start:
         backend.start()  # after the window is connected: the first discovery is not lost
 

@@ -405,64 +405,51 @@ class CommandPalette(QDialog):
 # ---------------------------------------------------------------------- settings
 
 
-class SettingsDialog(QDialog):
-    """Edits ``Settings``; the caller saves them to config.toml."""
+class SettingsFields:
+    """The editors for every ``Settings`` field, shared by the dialog and the Settings page.
 
-    def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Settings")
-        self._settings = settings
+    ``_build_fields`` creates them, ``_load_fields`` shows a ``Settings`` in them and
+    ``result_settings`` reads them back (fields without an editor keep their value).
+    """
+
+    _settings: Settings
+
+    def _build_fields(self, settings: Settings) -> None:
         self.theme = QComboBox()
         self.theme.addItems(["Follow system", "Light", "Dark"])
-        self.theme.setCurrentIndex(THEMES.index(settings.theme))
         self.retention_days = QSpinBox()
         self.retention_days.setRange(0, 3650)
         self.retention_days.setSuffix(" days")
         self.retention_days.setSpecialValueText("Keep forever")
-        self.retention_days.setValue(settings.retention_days)
         self.max_rows = QSpinBox()
         self.max_rows.setRange(0, 100_000_000)
         self.max_rows.setSingleStep(10_000)
         self.max_rows.setSpecialValueText("No limit")
-        self.max_rows.setValue(settings.max_rows_per_source)
         self.rule_dirs = QListWidget()
-        self.rule_dirs.addItems(list(settings.rule_dirs))
-        add_dir, remove_dir = QPushButton("Add folder…"), QPushButton("Remove")
-        add_dir.clicked.connect(self._add_dir)
-        remove_dir.clicked.connect(lambda: self.rule_dirs.takeItem(self.rule_dirs.currentRow()))
-        dir_buttons = QHBoxLayout()
-        dir_buttons.addWidget(add_dir)
-        dir_buttons.addWidget(remove_dir)
-        dir_buttons.addStretch()
-        self.exclude = QPlainTextEdit("\n".join(settings.discovery_exclude))
+        self.add_dir_btn, self.remove_dir_btn = QPushButton("Add folder…"), QPushButton("Remove")
+        self.add_dir_btn.clicked.connect(self._add_dir)
+        self.remove_dir_btn.clicked.connect(
+            lambda: self.rule_dirs.takeItem(self.rule_dirs.currentRow())
+        )
+        self.exclude = QPlainTextEdit()
         self.exclude.setAccessibleName("Hidden sources, one pattern per line")
         self.exclude.setFixedHeight(80)
         self.inline = QComboBox()
         self.inline.addItems(["Off", "Compact: title after the line", "Full: a second line"])
-        self.inline.setCurrentIndex(INLINE_MODES.index(settings.inline_explanations))
-        self.notify = {}
-        notify_box = QVBoxLayout()
-        for key, label in CONDITIONS.items():
-            box = QCheckBox(label)
-            box.setChecked(key in settings.notify_on)
-            self.notify[key] = box
-            notify_box.addWidget(box)
-        self.muted = QPlainTextEdit("\n".join(settings.muted))
+        self.notify: dict[str, QCheckBox] = {k: QCheckBox(text) for k, text in CONDITIONS.items()}
+        self.muted = QPlainTextEdit()
         self.muted.setAccessibleName("Sources that never notify, one id per line")
         self.muted.setFixedHeight(60)
         self.interval = QSpinBox()
         self.interval.setRange(5, 3600)
         self.interval.setSuffix(" s")
-        self.interval.setValue(settings.discovery_interval_s)
         self.redact = QCheckBox("Remove passwords, tokens, keys and card numbers before storing")
-        self.redact.setChecked(settings.redact_secrets)
         self.reversible = QCheckBox("Keep originals on this computer so I can reveal them")
-        self.reversible.setChecked(settings.redact_reversible)
         self.reversible.setToolTip(
             "Off (recommended): secrets are gone for good. On: they are kept in an owner-only "
             "file under ~/.local/share/loglens/vault. Exports never contain them."
         )
-        self.redact_patterns = QPlainTextEdit("\n".join(settings.redact_patterns))
+        self.redact_patterns = QPlainTextEdit()
         self.redact_patterns.setAccessibleName("Extra secret patterns, one regex per line")
         self.redact_patterns.setFixedHeight(50)
         self.pattern_error = QLabel("")
@@ -471,7 +458,88 @@ class SettingsDialog(QDialog):
         self.memory_mb = _budget_box(settings.memory_budget_mb, 128, 65_536, " MB")
         self.disk_mb = _budget_box(settings.disk_budget_mb, 64, 1_048_576, " MB")
         self.collectors = _budget_box(settings.max_collectors, 1, 10_000, "")
+        self._load_fields(settings)
 
+    def _load_fields(self, settings: Settings) -> None:
+        """Show ``settings`` in the editors (they become the base of ``result_settings``)."""
+        self._settings = settings
+        self.theme.setCurrentIndex(THEMES.index(settings.theme))
+        self.retention_days.setValue(settings.retention_days)
+        self.max_rows.setValue(settings.max_rows_per_source)
+        self.rule_dirs.clear()
+        self.rule_dirs.addItems(list(settings.rule_dirs))
+        self.exclude.setPlainText("\n".join(settings.discovery_exclude))
+        self.inline.setCurrentIndex(INLINE_MODES.index(settings.inline_explanations))
+        for key, box in self.notify.items():
+            box.setChecked(key in settings.notify_on)
+        self.muted.setPlainText("\n".join(settings.muted))
+        self.interval.setValue(settings.discovery_interval_s)
+        self.redact.setChecked(settings.redact_secrets)
+        self.reversible.setChecked(settings.redact_reversible)
+        self.redact_patterns.setPlainText("\n".join(settings.redact_patterns))
+        self.pattern_error.setText("")
+        budgets: list[tuple[QSpinBox, int]] = [
+            (self.memory_mb, settings.memory_budget_mb),
+            (self.disk_mb, settings.disk_budget_mb),
+            (self.collectors, settings.max_collectors),
+        ]
+        for spin, value in budgets:
+            spin.setValue(value if value else spin.minimum())
+
+    def pattern_errors(self) -> list[str]:
+        """Invalid custom secret patterns (a pattern that is silently dropped would leave
+        the secrets it was meant to hide, so nothing is saved while there are any)."""
+        errors = Redactor(self._patterns()).errors
+        self.pattern_error.setText("Not saved, fix: " + "; ".join(errors) if errors else "")
+        return errors
+
+    def _patterns(self) -> tuple[str, ...]:
+        lines = self.redact_patterns.toPlainText().splitlines()
+        return tuple(p.strip() for p in lines if p.strip())
+
+    def _add_dir(self) -> None:
+        parent = self if isinstance(self, QWidget) else None
+        path = QFileDialog.getExistingDirectory(parent, "Rule pack folder")
+        if path:
+            self.rule_dirs.addItem(path)
+
+    def result_settings(self) -> Settings:
+        """The edited settings."""
+        patterns = tuple(p.strip() for p in self.exclude.toPlainText().splitlines() if p.strip())
+        return replace(
+            self._settings,
+            theme=THEMES[self.theme.currentIndex()],
+            retention_days=self.retention_days.value(),
+            max_rows_per_source=self.max_rows.value(),
+            rule_dirs=tuple(self.rule_dirs.item(i).text() for i in range(self.rule_dirs.count())),
+            discovery_exclude=patterns,
+            discovery_interval_s=self.interval.value(),
+            inline_explanations=INLINE_MODES[self.inline.currentIndex()],
+            notify_on=tuple(k for k, box in self.notify.items() if box.isChecked()),
+            muted=tuple(m.strip() for m in self.muted.toPlainText().splitlines() if m.strip()),
+            redact_secrets=self.redact.isChecked(),
+            redact_reversible=self.reversible.isChecked(),
+            redact_patterns=self._patterns(),
+            memory_budget_mb=_budget(self.memory_mb),
+            disk_budget_mb=_budget(self.disk_mb),
+            max_collectors=_budget(self.collectors),
+        )
+
+
+class SettingsDialog(QDialog, SettingsFields):
+    """Edits ``Settings`` in one form; the caller saves them to config.toml."""
+
+    def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self._build_fields(settings)
+        dir_buttons = QHBoxLayout()
+        dir_buttons.addWidget(self.add_dir_btn)
+        dir_buttons.addWidget(self.remove_dir_btn)
+        dir_buttons.addStretch()
+        notify_box = QVBoxLayout()
+        for box in self.notify.values():
+            notify_box.addWidget(box)
         form = QFormLayout()
         form.addRow("Theme", self.theme)
         form.addRow("Keep logs for", self.retention_days)
@@ -507,44 +575,9 @@ class SettingsDialog(QDialog):
         self.resize(600, 860)
 
     def accept(self) -> None:
-        """Save, unless a custom secret pattern is not a valid regex (a pattern that is
-        silently dropped would leave the secrets it was meant to hide)."""
-        errors = Redactor(self._patterns()).errors
-        if errors:
-            self.pattern_error.setText("Not saved, fix: " + "; ".join(errors))
-            return
-        super().accept()
-
-    def _patterns(self) -> tuple[str, ...]:
-        lines = self.redact_patterns.toPlainText().splitlines()
-        return tuple(p.strip() for p in lines if p.strip())
-
-    def _add_dir(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Rule pack folder")
-        if path:
-            self.rule_dirs.addItem(path)
-
-    def result_settings(self) -> Settings:
-        """The edited settings."""
-        patterns = tuple(p.strip() for p in self.exclude.toPlainText().splitlines() if p.strip())
-        return replace(
-            self._settings,
-            theme=THEMES[self.theme.currentIndex()],
-            retention_days=self.retention_days.value(),
-            max_rows_per_source=self.max_rows.value(),
-            rule_dirs=tuple(self.rule_dirs.item(i).text() for i in range(self.rule_dirs.count())),
-            discovery_exclude=patterns,
-            discovery_interval_s=self.interval.value(),
-            inline_explanations=INLINE_MODES[self.inline.currentIndex()],
-            notify_on=tuple(k for k, box in self.notify.items() if box.isChecked()),
-            muted=tuple(m.strip() for m in self.muted.toPlainText().splitlines() if m.strip()),
-            redact_secrets=self.redact.isChecked(),
-            redact_reversible=self.reversible.isChecked(),
-            redact_patterns=self._patterns(),
-            memory_budget_mb=_budget(self.memory_mb),
-            disk_budget_mb=_budget(self.disk_mb),
-            max_collectors=_budget(self.collectors),
-        )
+        """Save, unless a custom secret pattern is not a valid regex."""
+        if not self.pattern_errors():
+            super().accept()
 
 
 def _budget_box(value: int, low: int, high: int, suffix: str) -> QSpinBox:

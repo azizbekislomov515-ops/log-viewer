@@ -62,6 +62,14 @@ from PySide6.QtWidgets import (
 from loglens.config import Settings, data_dir, save_settings
 from loglens.core.models import DiscoveryIssue, LogEntry, LogSource, ServiceGroup, Severity
 from loglens.gui import theme as themes
+from loglens.gui.dashboard.access import AccessPage
+from loglens.gui.dashboard.alerts import AlertsPage
+from loglens.gui.dashboard.base import DashPage
+from loglens.gui.dashboard.model import DashboardModel
+from loglens.gui.dashboard.nav import PAGES, NavBar
+from loglens.gui.dashboard.overview import OverviewPage
+from loglens.gui.dashboard.settings import SettingsPage
+from loglens.gui.dashboard.timeline import TimelinePage
 from loglens.gui.insights_ui import Insights
 from loglens.gui.log_model import Column, LogTableModel, SearchSpec, plain_tooltip
 from loglens.gui.log_view import LogView
@@ -72,7 +80,6 @@ from loglens.gui.widgets import (
     DebugOverlay,
     FrameMeter,
     IssuesPanel,
-    SettingsDialog,
     SourceDelegate,
     TimeRangeDialog,
 )
@@ -368,6 +375,8 @@ class MainWindow(QMainWindow):
         self._last_drain_ms = 0.0
         self._rates = {"rows": 0.0, "pages": 0.0, "t": time.perf_counter(), "rows0": 0, "pages0": 0}
         self._restored = False
+        self._restoring = False
+        self._issue_key: object = None
 
         self.tree_model = SourceTreeModel(self)
         self.tree_model.set_pinned(settings.pinned)
@@ -381,7 +390,8 @@ class MainWindow(QMainWindow):
         self.palette_popup.chosen.connect(self.open_source)
         self.frame_meter = FrameMeter(self)
         self.frame_meter.start()
-        self.overlay = DebugOverlay(self._debug_text, self.stack)
+        self.overlay = DebugOverlay(self._debug_text, self.pages)
+        self._build_pages()
         self._build_shortcuts()
 
         backend.sourcesChanged.connect(self._on_sources)
@@ -462,13 +472,17 @@ class MainWindow(QMainWindow):
         banner_layout.addWidget(self.limits_text, 1)
         self.limits_banner.hide()
         self._degraded: dict[str, str] = {}
-        central = QWidget(self)
-        column = QVBoxLayout(central)
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(0)
-        column.addWidget(self.limits_banner)
-        column.addWidget(self.stack, 1)
-        self.setCentralWidget(central)
+        # The log workspace (banner and tabs, with the docks and the main toolbar) is the
+        # Sources page; the dashboard pages share the central stack with it.
+        self.workspace = QWidget(self)
+        self._workspace_column = QVBoxLayout(self.workspace)
+        self._workspace_column.setContentsMargins(0, 0, 0, 0)
+        self._workspace_column.setSpacing(0)
+        self._workspace_column.addWidget(self.limits_banner)
+        self._workspace_column.addWidget(self.stack, 1)
+        self.pages = QStackedWidget(self)
+        self.pages.addWidget(self.workspace)
+        self.setCentralWidget(self.pages)
 
     def _build_toolbar(self) -> None:
         bar = QToolBar("Main", self)
@@ -550,7 +564,7 @@ class MainWindow(QMainWindow):
         menu.addAction("Jump to source…", QKeySequence("Ctrl+K"), self.show_palette)
         menu.addAction("Look for new sources now", self.backend.refresh_discovery)
         menu.addAction("Settings…", QKeySequence("Ctrl+,"), self.show_settings)
-        menu.addAction("Discovery issues", lambda: self.issues_dock.setVisible(True))
+        menu.addAction("Discovery issues", lambda: self.show_page("access"))
         menu.addSeparator()
         menu.addAction("Overview of this tab", QKeySequence("Ctrl+O"), self.overview_of_tab)
         menu.addAction("Export…", self.insights.export_view)
@@ -588,9 +602,7 @@ class MainWindow(QMainWindow):
         self.issues_btn = QToolButton(status)
         self.issues_btn.setAccessibleName("Discovery issues")
         self.issues_btn.setText("No issues")
-        self.issues_btn.clicked.connect(
-            lambda: self.issues_dock.setVisible(not self.issues_dock.isVisible())
-        )
+        self.issues_btn.clicked.connect(lambda: self.show_page("access"))
         for widget in (self.rate_label, self.collectors_label, self.stored_label):
             status.addPermanentWidget(widget)
         status.addPermanentWidget(self.issues_btn)
@@ -604,6 +616,67 @@ class MainWindow(QMainWindow):
         dock.hide()
         self.issues_dock = dock
 
+    def _build_pages(self) -> None:
+        self.dashboard = DashboardModel(
+            self.analytics,
+            self.insights.analyst,
+            lambda: {s.id: s for s in self.tree_model.sources()},
+            self,
+        )
+        self.page_widgets: dict[str, QWidget] = {"sources": self.workspace}
+        for key, page_class in (
+            ("overview", OverviewPage),
+            ("timeline", TimelinePage),
+            ("access", AccessPage),
+            ("alerts", AlertsPage),
+            ("settings", SettingsPage),
+        ):
+            page = page_class(self)
+            self.page_widgets[key] = page
+            self.pages.addWidget(page)
+        self.dash_pages: list[DashPage] = [
+            p for p in self.page_widgets.values() if isinstance(p, DashPage)
+        ]
+        bar = QToolBar("Navigation", self)
+        bar.setObjectName("navBar")
+        bar.setMovable(False)
+        bar.toggleViewAction().setEnabled(False)
+        self.nav = NavBar(bar)
+        bar.addWidget(self.nav)
+        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, bar)
+        self.nav.chosen.connect(self.show_page)
+        self.page = "sources"
+        self._docks = {
+            self.sources_dock: True,
+            self.insights.explain_dock: not self.insights.explain_dock.isHidden(),
+            self.issues_dock: False,
+        }
+        self.nav.select("sources")
+
+    def show_page(self, key: str) -> None:
+        """Switch the window to a page (overview, timeline, sources, access, alerts,
+        settings). The workspace's docks show only with the Sources page."""
+        if self.page == "sources" and key != "sources":
+            self._docks = {dock: not dock.isHidden() for dock in self._docks}
+        self.page = key
+        self.pages.setCurrentWidget(self.page_widgets[key])
+        for dock, visible in self._docks.items():
+            dock.setVisible(visible and key == "sources")
+        self.toolbar.setVisible(key == "sources")
+        self.dashboard.set_active(key in ("overview", "timeline"))
+        self.nav.select(key)
+
+    def search_everywhere(self, text: str) -> None:
+        """A header search: every followed source merged in one tab, matches highlighted."""
+        followed = tuple(sorted(self._follow_refs))
+        if not text:
+            return
+        if not followed:
+            self.statusBar().showMessage("Open or pin a source on the Sources page first", 6000)
+            return
+        state = TabState(f"Search: {text}", followed, search=SearchSpec(text))
+        self._open(state, new_tab=True)
+
     def _build_shortcuts(self) -> None:
         def bind(keys: str, fn: Any) -> None:
             shortcut = QShortcut(QKeySequence(keys), self)
@@ -615,6 +688,9 @@ class MainWindow(QMainWindow):
         bind("Ctrl+P", self.pause_btn.toggle)
         bind("Ctrl+W", lambda: self.close_tab(self.tabs.currentIndex()))
         bind("Ctrl+,", self.show_settings)
+        for key, _label, keys in PAGES:
+            if keys.startswith("Ctrl+Shift"):
+                bind(keys, functools.partial(self.show_page, key))
         bind("F3", lambda: self.next_match(forward=True))
         bind("Shift+F3", lambda: self.next_match(forward=False))
         bind("Ctrl+Alt+D", self.overlay.toggle)
@@ -644,6 +720,9 @@ class MainWindow(QMainWindow):
         self._issues = issues
         self._update_issues()
         self.insights._pages_update_sources()
+        self.dashboard.set_ready()
+        if self.page in ("overview", "alerts"):
+            self.page_widgets[self.page].refresh()  # type: ignore[attr-defined]
         for source_id in self.settings.pinned:
             if (source := self.tree_model.source(source_id)) is not None and not self._follow_refs[
                 source_id
@@ -793,6 +872,7 @@ class MainWindow(QMainWindow):
             for i, tab in enumerate(self._all_tabs()):
                 if tab.state.source_ids == state.source_ids:
                     self.tabs.setCurrentIndex(i)
+                    self._to_sources()
                     return tab
         tab = LogTab(state, self.worker, self.tree_model.display_names(), self.tabs)
         tab.set_theme(self._theme, self._font)
@@ -805,8 +885,14 @@ class MainWindow(QMainWindow):
         self._add_close_button(index, tab, state.title)
         self.tabs.setCurrentIndex(index)
         self.stack.setCurrentWidget(self.tabs)
+        self._to_sources()
         self._save_session()
         return tab
+
+    def _to_sources(self) -> None:
+        """Opening logs shows them (except while the last session's tabs are restored)."""
+        if not self._restoring and self.page != "sources":
+            self.show_page("sources")
 
     def _add_close_button(self, index: int, page: QWidget, title: str) -> None:
         close = QToolButton(self.tabs)
@@ -977,6 +1063,7 @@ class MainWindow(QMainWindow):
 
     def focus_search(self) -> None:
         """Ctrl+F."""
+        self._to_sources()
         self.search.setFocus()
         self.search.selectAll()
 
@@ -1010,6 +1097,7 @@ class MainWindow(QMainWindow):
             for tab in self._all_tabs():
                 tab.append_live(entries)
             self.insights._pages_mark_dirty(entries)
+            self.dashboard.mark_dirty()
             self.insights.live_explainer.feed(entries)
             current = self._tab()
             visible = set(current.state.source_ids) if current and self.isActiveWindow() else set()
@@ -1140,6 +1228,11 @@ class MainWindow(QMainWindow):
         )
 
     def _update_issues(self) -> None:
+        key = (self._issues, tuple(sorted(self._collector_errors.items())))
+        if key != self._issue_key:
+            self._issue_key = key
+            if self.page == "access":
+                self.page_widgets["access"].refresh()  # type: ignore[attr-defined]
         self.issues_panel.set_issues(self._issues, self._collector_errors)
         n = self.issues_panel.count
         self.issues_btn.setText(f"⚠ {n} issue{'s' if n != 1 else ''}" if n else "No issues")
@@ -1172,6 +1265,9 @@ class MainWindow(QMainWindow):
         self.insights.explain_panel.theme = theme
         for page in self.insights._pages:
             page.set_theme(theme)
+        self.nav.set_theme(theme)
+        for dash in self.dash_pages:
+            dash.set_theme(theme)
         self.issues_panel.set_issues(self._issues, self._collector_errors)
         for tab in self._all_tabs():
             tab.set_theme(theme, self._font)
@@ -1182,12 +1278,14 @@ class MainWindow(QMainWindow):
         self.palette_popup.open_with(self.tree_model.sources())
 
     def show_settings(self) -> None:
-        """Ctrl+,."""
-        dialog = SettingsDialog(self.settings, self)
-        if not dialog.exec():
-            return
+        """Ctrl+,: the Settings page."""
+        self.show_page("settings")
+
+    def apply_settings(self, new: Settings) -> None:
+        """Use and save edited settings (theme, discovery and notification changes apply
+        at once; retention, privacy and limits at the next start)."""
         old = self.settings
-        self.settings = dialog.result_settings()
+        self.settings = new
         self._save_settings()
         if self.settings.theme != old.theme:
             app = QGuiApplication.instance()
@@ -1227,12 +1325,16 @@ class MainWindow(QMainWindow):
             data = json.loads(self._state_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
-        for raw in data.get("tabs", []):
-            state = TabState.from_json(raw)
-            known = tuple(s for s in state.source_ids if self.tree_model.source(s) is not None)
-            if known:
-                state.source_ids = known
-                self._open(state, new_tab=True)
+        self._restoring = True
+        try:
+            for raw in data.get("tabs", []):
+                state = TabState.from_json(raw)
+                known = tuple(s for s in state.source_ids if self.tree_model.source(s) is not None)
+                if known:
+                    state.source_ids = known
+                    self._open(state, new_tab=True)
+        finally:
+            self._restoring = False
         current = data.get("current", 0)
         if isinstance(current, int) and 0 <= current < self.tabs.count():
             self.tabs.setCurrentIndex(current)
@@ -1247,6 +1349,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         self._save_session()
         self._drain_timer.stop()
+        self.dashboard.stop()
         self.frame_meter.stop()
         for page in self.insights._pages:
             page.model.stop()

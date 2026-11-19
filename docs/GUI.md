@@ -10,7 +10,28 @@ rendered offscreen from demo data with
 | ![main](screenshots/main-search-dark.png) | ![light](screenshots/compose-merged-light.png) |
 | Search highlights, severity rail, unread badges | Compose project merged, one color per service |
 
-## Layout
+## Pages
+
+A navigation bar on the left switches between six pages (design:
+[`design/loglens-dashboard.figcraft`](design/loglens-dashboard.figcraft), dark and light).
+LogLens opens on **Overview**.
+
+| Page | Shows | Data |
+|---|---|---|
+| Overview | events per minute, errors in 24 h, sources followed, healthy services; event rate per hour; entries by source kind; errors per day; latest explanations (click: open logs). *Copy summary* puts it on the clipboard as Markdown, redacted again | `dashboard.model.build_dashboard` |
+| Timeline | the stacked severity chart with spike markers (15 min, 1 h, 6 h or 24 h; click a bar: logs of that interval), notable moments (warnings, restarts, detections, spikes), busiest sources | same job |
+| Sources | the log workspace described below: tree, tabs, toolbar, Explain panel | |
+| Access | who LogLens runs as, journal/Docker/file/secret permissions, and each discovery issue with its fix and a Copy button (never run for you) | discovery issues, `security.privileges` |
+| Alerts | notification conditions as switches, muted sources (Unmute), notifications sent this session, *Send a test alert* | `NotificationCenter`, `LiveExplainer` |
+| Settings | every setting in cards, *Save* applies and writes config.toml; *Clear all data* | `SettingsFields` (shared with the dialog) |
+
+The header search on Overview and Timeline opens every followed source in one tab with the
+words highlighted. The Overview and Timeline numbers come from one job on the analytics
+thread (exact SQL counts plus the newest 400 notable entries, explained by the rule packs).
+It runs only while one of those pages is visible, at most every 5 s, and not before the
+first discovery result (the backend has created the database by then).
+
+## Layout (Sources page)
 
 * **Sources** (left dock): System services / Docker Compose (project → services) /
   Standalone containers / Log files (group → files). Each row: kind icon, status shape
@@ -114,7 +135,8 @@ and highlighting uses a 5 ms per-line timeout.
 | Ctrl+1 … Ctrl+9, Ctrl+W | Switch to tab N, close tab |
 | Enter / double-click | Expand or collapse a multi-line entry |
 | Ctrl+C | Copy selected entries |
-| Ctrl+, | Settings |
+| Ctrl+Shift+1 … Ctrl+Shift+5 | Overview, Timeline, Sources, Access, Alerts |
+| Ctrl+, | Settings page |
 | Ctrl+Alt+D | Debug overlay: frame time, rows/s, pages/s, drain time, backlog |
 
 Every interactive widget has an accessible name; tab order follows the visual order.

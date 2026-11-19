@@ -191,6 +191,8 @@ def palette(t: Theme) -> QPalette:
 
 def stylesheet(t: Theme) -> str:
     """The one stylesheet. Quiet chrome: hairline borders, no gradients, pill chips."""
+    # Dashboard pages: cards sit one step lighter than the page in dark, white on grey in light.
+    page, card = (t.canvas, t.surface) if t.name == "dark" else (t.surface, t.canvas)
     return f"""
     QMainWindow, QDialog {{ background: {t.surface}; }}
     QToolBar {{ background: {t.surface}; border: none; border-bottom: 1px solid {t.border};
@@ -261,4 +263,50 @@ def stylesheet(t: Theme) -> str:
     QFrame#palette QListWidget {{ border: none; background: transparent; }}
     QFrame#palette QListWidget::item {{ padding: 5px 6px; border-radius: 4px; }}
     QFrame#palette QListWidget::item:selected {{ background: {t.accent}; color: {t.on_accent}; }}
+    QToolBar#navBar {{ background: {t.surface}; border: none; border-right: 1px solid {t.border};
+                       padding: 14px 8px 10px 8px; }}
+    QLabel#navLogo {{ font-size: 17px; font-weight: 600; color: {t.text}; }}
+    QPushButton[nav="true"] {{ background: transparent; border: none; color: {t.dim};
+                               text-align: left; padding: 9px 12px; border-radius: 10px;
+                               font-size: 14px; }}
+    QPushButton[nav="true"]:hover {{ background: {t.raised}; color: {t.text}; }}
+    QPushButton[nav="true"]:checked {{ background: {_rgba(t.accent, 0.14)}; color: {t.accent}; }}
+    QPushButton[nav="true"]:focus {{ border: 1px solid {t.accent}; }}
+    QFrame#machine {{ background: {t.raised}; border-radius: 12px; }}
+    QWidget#dashPage {{ background: {page}; }}
+    QScrollArea#dashScroll, QWidget#dashBody {{ background: transparent; }}
+    QFrame#card {{ background: {card}; border-radius: 18px; }}
+    QLabel#cardTitle {{ font-size: 16px; font-weight: 600; color: {t.text}; }}
+    QLabel#pageTitle {{ font-size: 28px; font-weight: 700; color: {t.text}; }}
+    QLabel#kpiValue {{ font-size: 30px; font-weight: 600; color: {t.text}; }}
+    QLabel#rowTitle {{ font-size: 14px; color: {t.text}; }}
+    QLabel#mono {{ font-family: monospace; color: {t.text}; }}
+    QListWidget#ruleDirs {{ background: {t.canvas}; border: 1px solid {t.border};
+                            border-radius: 8px; }}
+    QFrame#command {{ background: {t.canvas}; border: 1px solid {t.border};
+                      border-radius: 8px; }}
+    QLineEdit#headerSearch {{ background: {t.surface}; border-radius: 10px; padding: 7px 10px; }}
+    QToolButton#bellButton {{ background: {t.surface}; border: 1px solid {t.border};
+                              border-radius: 10px; padding: 6px 9px; }}
+    QPushButton#primary {{ background: {t.accent}; color: {t.on_accent}; border: none;
+                           border-radius: 10px; padding: 8px 18px; font-weight: 600; }}
+    QPushButton#danger {{ background: transparent; color: {t.error};
+                          border: 1px solid {t.error}; border-radius: 8px; }}
+    QPushButton#link {{ background: transparent; border: none; color: {t.accent};
+                        padding: 2px 8px; }}
+    QPushButton#segment {{ background: {t.raised}; color: {t.dim}; border: none;
+                           border-radius: 8px; padding: 4px 12px; }}
+    QPushButton#segment:checked {{ background: {_rgba(t.accent, 0.14)}; color: {t.accent}; }}
+    QTableWidget#dashTable {{ background: transparent; border: none; color: {t.text};
+                              selection-background-color: {t.raised};
+                              selection-color: {t.text}; }}
+    QTableWidget#dashTable::item {{ border-bottom: 1px solid {t.border}; padding: 0 6px; }}
+    QTableWidget#dashTable QHeaderView::section {{ background: transparent; color: {t.dim};
+                                                  padding: 6px; }}
     """
+
+
+def _rgba(hexcode: str, opacity: float) -> str:
+    """``hexcode`` as a stylesheet rgba() with ``opacity`` (0..1)."""
+    color = QColor(hexcode)
+    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {round(opacity * 255)})"
