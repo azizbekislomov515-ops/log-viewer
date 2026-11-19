@@ -11,10 +11,15 @@ dependencies = [
     "inotify-simple>=1.3",
     "jinja2>=3.1",
     "jsonschema>=4.23",
+    "pyside6>=6.7",
+    "regex>=2024.11.6",
 ]
 
 [project.scripts]
 loglens-cli = "loglens.cli:main"
+
+[project.gui-scripts]
+loglens = "loglens.gui.app:main"
 
 [dependency-groups]
 dev = [
@@ -28,6 +33,8 @@ dev = [
     "hypothesis>=6.170.15",
     "pytest-cov>=7.1.0",
     "types-jsonschema>=4.26.0.20261006",
+    "pytest-qt>=4.4",
+    "types-regex>=2026.11.15.20261116",
 ]
 
 [build-system]
@@ -48,6 +55,8 @@ ignore = ["PLR0913", "PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S108", "PLR0915"]
+# Widget constructors and the screenshot script build many widgets in one place.
+"src/loglens/gui/**" = ["PLR0915"]
 
 [tool.mypy]
 python_version = "3.12"
