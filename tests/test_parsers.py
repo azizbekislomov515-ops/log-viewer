@@ -9,6 +9,7 @@ Regenerate golden files after an intended parser change, then review the diff:
 import json
 import logging
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -72,7 +73,9 @@ def read_corpus(name: str) -> tuple[str, list[LogEntry]]:
     assembler, normalize = MultilineAssembler(), Normalizer()
     records = [RawRecord(source_id, line, timestamp=REF) for line in text.split("\n")[:-1]]
     events = [e for r in records for e in assembler.feed(r, 0.0)] + assembler.flush()
-    source = source_from_id(source_id)
+    # Goldens check what the parser read. For containers Docker's write time would win
+    # over the line's time (tested separately), so read them as plain sources.
+    source = replace(source_from_id(source_id), kind=SourceKind.FILE)
     return text, [normalize(source, e) for e in events]
 
 
@@ -612,6 +615,15 @@ def test_normalizer_timestamp_precedence() -> None:
     before = datetime.now(UTC)
     bare = normalize(src, RawRecord(src.id, "hello"))
     assert bare.timestamp >= before and bare.fields["timestamp_source"] == "ingest"
+
+
+def test_docker_write_time_beats_the_time_written_in_the_line() -> None:
+    """Times inside containers are often naive UTC while the host is not: trust Docker."""
+    normalize, src = Normalizer(), source_from_id("docker:web-1")
+    line = "2026-11-17T22:50:01 INFO started"
+    docker_time = datetime(2026, 11, 17, 22, 50, 1, 500_000, tzinfo=UTC)
+    assert normalize(src, RawRecord(src.id, line, docker_time)).timestamp == docker_time
+    assert normalize(src, RawRecord(src.id, line)).timestamp.minute == 50  # no Docker time
 
 
 def test_normalizer_severity_precedence() -> None:

@@ -10,7 +10,12 @@ from loglens.parsers.base import ParsedFields, SourceMatch, events, match_event,
 from loglens.parsers.timestamps import parse_ctime, warn_unparseable
 
 # "Tue Nov 17 22:50:01 2026 -> msg" (LogTime yes); without LogTime only "msg".
-_PREFIX = re.compile(r"(?P<ts>[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]?\d \d{2}:\d{2}:\d{2} \d{4}) -> ")
+# ClamAV >= 1.0 puts the level first on errors and warnings: "ERROR: Tue Nov ... -> msg".
+_PREFIX = re.compile(
+    r"(?:(?P<level>ERROR|WARNING): )?"
+    r"(?P<ts>[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]?\d \d{2}:\d{2}:\d{2} \d{4}) -> "
+)
+_LEVELS = {"ERROR": Severity.ERROR, "WARNING": Severity.WARNING}
 _DB = r"(?P<database>[\w.-]+\.c[lv]d)"
 _SIGS = r"\(version: (?P<version>\d+), sigs: (?P<signatures>\d+)"
 
@@ -100,6 +105,9 @@ class ClamavParser:
                 **{k: int(v) if k in _INT_FIELDS else v for k, v in fields.items()},
             }
             result.severity = severity
+        if prefix is not None and prefix["level"] and result.severity is None:
+            result.severity = _LEVELS[prefix["level"]]
+            result.fields.setdefault("event", prefix["level"].lower())
         if prefix is not None:
             result.timestamp = parse_ctime(prefix["ts"])
             if result.timestamp is None:

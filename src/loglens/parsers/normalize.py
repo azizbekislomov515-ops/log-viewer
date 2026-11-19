@@ -3,8 +3,10 @@
 Precedence rules:
 
 * **timestamp**: the time written in the line (parser) > the collector's source time
-  (journald ``__REALTIME_TIMESTAMP``, Docker's receive time) > the host clock at ingest,
-  which is flagged ``timestamp_source="ingest"`` so ordering by it is known to be weak.
+  (journald ``__REALTIME_TIMESTAMP``) > the host clock at ingest, which is flagged
+  ``timestamp_source="ingest"`` so ordering by it is known to be weak. Exception: for
+  Docker containers Docker's own per-line timestamp wins, because times written inside a
+  container are usually naive and in the container's time zone, not the host's.
 * **severity**: the line's own level (parser) > the source's (journald ``PRIORITY``) >
   ERROR for an assembled stack trace > keyword inference > INFO.
 * **fields**: normalizer-computed (``parser``, ``truncated``, ``timestamp_source``) >
@@ -17,8 +19,9 @@ Precedence rules:
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 
-from loglens.core.models import LogEntry, LogSource, RawRecord, Severity, utc_now
+from loglens.core.models import LogEntry, LogSource, RawRecord, Severity, SourceKind, utc_now
 from loglens.parsers.base import ParserRegistry
 from loglens.parsers.multiline import exception_fields
 from loglens.parsers.severity import SeverityInferrer
@@ -62,7 +65,12 @@ class Normalizer:
         if truncated:
             fields["truncated"] = True
 
-        timestamp = parsed.timestamp or record.timestamp
+        # Docker stamps every line with its exact write time; the time written in the line
+        # is often naive and in the container's time zone (usually UTC, not the host's).
+        if source.kind is SourceKind.DOCKER_CONTAINER and record.timestamp is not None:
+            timestamp: datetime | None = record.timestamp
+        else:
+            timestamp = parsed.timestamp or record.timestamp
         if timestamp is None:
             timestamp = utc_now()
             fields["timestamp_source"] = "ingest"
