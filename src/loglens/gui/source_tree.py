@@ -17,6 +17,7 @@ from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 
 from loglens.core.models import GroupKind, LogSource, ServiceGroup
+from loglens.gui.log_model import plain_tooltip
 
 
 class NodeKind(StrEnum):
@@ -151,7 +152,7 @@ class SourceTreeModel(QStandardItemModel):
         item.setData(source, TreeRole.SOURCE)
         item.setData(self._unread.get(source.id, 0), TreeRole.UNREAD)
         item.setData(source.id in self._pinned, TreeRole.PINNED)
-        item.setData(source.id, Qt.ItemDataRole.ToolTipRole)
+        item.setData(plain_tooltip(source.id), Qt.ItemDataRole.ToolTipRole)
         item.setData(
             f"{source.display_name}, {source.status.value}", Qt.ItemDataRole.AccessibleTextRole
         )

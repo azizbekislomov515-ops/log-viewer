@@ -17,6 +17,7 @@ the background; ``match_rows`` drives next/previous and the severity-map ticks.
 from __future__ import annotations
 
 import bisect
+import html
 import json
 import logging
 from array import array
@@ -230,7 +231,8 @@ class LogTableModel(QAbstractTableModel):
             case Role.SOURCE_ID:
                 return entry.source_id
             case Qt.ItemDataRole.ToolTipRole if index.column() == Column.MESSAGE:
-                return entry.message if len(entry.message) < 2000 else entry.message[:2000] + "…"
+                text = entry.message if len(entry.message) < 2000 else entry.message[:2000] + "…"
+                return plain_tooltip(text)
             case Qt.ItemDataRole.AccessibleTextRole:
                 return (
                     f"{entry.severity.name.lower()}, {self._display(entry, Column.TIME)}, "
@@ -609,6 +611,16 @@ class LogTableModel(QAbstractTableModel):
             ensure_ascii=False,
             default=str,
         )
+
+
+def plain_tooltip(text: str) -> str:
+    """Tooltip markup that shows ``text`` literally.
+
+    Qt renders a tooltip as HTML when it looks like HTML, so log text such as
+    ``<a href=...>`` or ``<img src=...>`` would be displayed as rich content. Escaping it
+    and setting it in an explicit rich-text block keeps it inert (newlines preserved).
+    """
+    return f'<p style="white-space:pre-wrap">{html.escape(text)}</p>'
 
 
 def _search_ids(storage: Storage, query: EntryQuery) -> array[int]:

@@ -344,3 +344,34 @@ def test_tree_layout_badges_pins(qapp: Any) -> None:
     model.set_pinned({"systemd:ssh.service"})
     assert item.data(TreeRole.PINNED) and model.pinned == {"systemd:ssh.service"}
     assert model.update(()) is True and model.rowCount() == 0
+
+
+def test_tooltips_show_log_text_literally(qapp: Any, db: Storage) -> None:
+    """Log lines are attacker-controlled; Qt would render HTML-looking tooltips as HTML."""
+    from PySide6.QtCore import Qt  # noqa: PLC0415
+
+    evil = '<a href="https://evil.example">Click</a><img src="file:///etc/shadow">\nline 2'
+    store(db, make("a", 800, message=evil))
+    model = LogTableModel(SyncWorker(db), EntryQuery(("a",)))
+    model.reload()
+    tip = model.index(model.rowCount() - 1, Column.MESSAGE).data(Qt.ItemDataRole.ToolTipRole)
+    assert "<a " not in tip and "<img" not in tip
+    assert "&lt;a href=&quot;https://evil.example&quot;&gt;Click&lt;/a&gt;" in tip
+    assert "\nline 2" in tip  # line breaks kept (pre-wrap)
+    assert (
+        log_model.plain_tooltip("<b>x</b>")
+        == '<p style="white-space:pre-wrap">&lt;b&gt;x&lt;/b&gt;</p>'
+    )
+    tree = SourceTreeModel()
+    tree.update(
+        (
+            ServiceGroup(
+                "g",
+                "<b>proj</b>",
+                GroupKind.DOCKER_COMPOSE,
+                (LogSource("docker:<i>x</i>", SourceKind.DOCKER_CONTAINER, "x", "g"),),
+            ),
+        )
+    )
+    item = tree.item_for("docker:<i>x</i>")
+    assert item is not None and "<i>" not in item.data(Qt.ItemDataRole.ToolTipRole)

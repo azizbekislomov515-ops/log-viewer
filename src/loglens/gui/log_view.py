@@ -326,6 +326,7 @@ class LogView(QWidget):
         self.map = SeverityMap(self.tree, self)
         self.map.jumpRequested.connect(self.go_to_row)
         self.caption = QLabel(self)
+        self.caption.setTextFormat(Qt.TextFormat.PlainText)  # service names come from labels
         self.caption.setObjectName("paneCaption")
         self.caption.hide()
         row = QHBoxLayout()

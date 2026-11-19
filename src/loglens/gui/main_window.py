@@ -58,7 +58,7 @@ from PySide6.QtWidgets import (
 from loglens.config import Settings, save_settings
 from loglens.core.models import DiscoveryIssue, LogEntry, LogSource, ServiceGroup, Severity
 from loglens.gui import theme as themes
-from loglens.gui.log_model import Column, LogTableModel, SearchSpec
+from loglens.gui.log_model import Column, LogTableModel, SearchSpec, plain_tooltip
 from loglens.gui.log_view import LogView
 from loglens.gui.source_tree import NodeKind, SourceTreeModel, TreeRole
 from loglens.gui.widgets import (
@@ -193,6 +193,7 @@ class LogTab(QWidget):
         self.banner = QFrame(self)
         self.banner.setObjectName("banner")
         self.banner_text = QLabel(self.banner)
+        self.banner_text.setTextFormat(Qt.TextFormat.PlainText)
         self.banner_text.setObjectName("bannerText")
         banner_layout = QHBoxLayout(self.banner)
         banner_layout.setContentsMargins(10, 4, 10, 4)
@@ -683,7 +684,7 @@ class MainWindow(QMainWindow):
             if (source := self.tree_model.source(source_id)) is not None:
                 self._follow(source)
         index = self.tabs.addTab(tab, state.title)
-        self.tabs.setTabToolTip(index, ", ".join(state.source_ids))
+        self.tabs.setTabToolTip(index, plain_tooltip(", ".join(state.source_ids)))
         close = QToolButton(self.tabs)
         close.setText("×")  # noqa: RUF001 (a real multiplication sign: the close glyph)
         close.setObjectName("tabClose")
@@ -814,7 +815,7 @@ class MainWindow(QMainWindow):
         self.search.style().polish(self.search)
         if error:
             self.match_label.setText("Search stopped")
-            self.match_label.setToolTip(error)
+            self.match_label.setToolTip(plain_tooltip(error))
             self.statusBar().showMessage(error, 8000)
         else:
             self._update_match_label()
