@@ -221,3 +221,36 @@ class DiscoveryResult:
 
     groups: tuple[ServiceGroup, ...] = ()
     issues: tuple[DiscoveryIssue, ...] = ()
+
+
+class Category(StrEnum):
+    """What kind of problem (or non-problem) an explanation describes."""
+
+    SECURITY = "security"
+    PERFORMANCE = "performance"
+    AVAILABILITY = "availability"
+    CONFIGURATION = "configuration"
+    INFO = "info"
+
+
+@dataclass(frozen=True, slots=True)
+class Explanation:
+    """Plain-language reading of one log entry, produced by a rule (never guessed).
+
+    ``plain_text`` is 1-2 sentences for a non-expert admin and quotes the concrete
+    IP/domain/container from the line. ``confidence`` (0..1) is how sure the rule is about
+    its *cause*; what the line says is matched deterministically. ``tags`` are rule labels
+    aggregate views use (e.g. ``restart``). Text is plain: escape it before showing it as
+    rich text.
+    """
+
+    title: str
+    plain_text: str
+    severity_assessment: Severity
+    category: Category
+    rule_id: str
+    confidence: float = 1.0
+    probable_cause: str | None = None
+    suggested_action: str | None = None
+    references: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
