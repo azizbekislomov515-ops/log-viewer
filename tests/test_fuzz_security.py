@@ -177,3 +177,33 @@ def test_parse_and_explain_never_raise_or_stall(source: object, prefix: str, tex
     assert time.perf_counter() - started < 0.5
     if explanation is not None:
         assert explanation.title
+
+
+KEY_PREFIXES = st.sampled_from(
+    ["", "x", "s", "sk_", "gh", "pass", "token", "xox", "aws", "eyJ", "sess", "authoriz"]
+)
+
+
+@SETTINGS
+@given(prefix=KEY_PREFIXES, form=SECRET_FORMS, secret=SECRET)
+def test_keyword_right_before_a_secret_form_does_not_hide_it(
+    prefix: str, form: str, secret: str
+) -> None:
+    assume(secret not in prefix + form + "[REDACTED:password authorization cookie]")
+    redacted, _ = Redactor().redact(prefix + form.format(s=secret))
+    assert secret not in redacted
+
+
+@SETTINGS
+@given(
+    key=st.sampled_from(["password", "db_password", "secret", "api_key", "token"]),
+    inner=st.sampled_from(["token:", "secret=", "pass:", "key="]),
+    secret=SECRET,
+)
+def test_values_that_start_with_a_key_word_are_redacted_whole(
+    key: str, inner: str, secret: str
+) -> None:
+    value = inner + secret
+    redacted, _ = Redactor().redact(f"login {key}={value} ok")
+    assert value not in redacted and secret not in redacted
+    assert inner not in redacted.split("=", 1)[1]  # no prefix of the secret remains

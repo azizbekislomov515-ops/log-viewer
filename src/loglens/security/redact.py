@@ -58,7 +58,9 @@ _RUN32 = re.compile(r"[A-Za-z0-9+/_=-]{32}")
 def luhn_ok(digits: str) -> bool:
     """Whether a 13-19 digit number passes the Luhn checksum (card numbers do)."""
     nums = [int(d) for d in digits if d.isdigit()]
-    if not 13 <= len(nums) <= 19 or len(set(nums)) == 1:
+    # Issuers start at 2-6 (Mastercard 2/5, Amex 3, Visa 4, Discover 6); epoch timestamps
+    # in ms/us start with 1 and pass Luhn one time in ten.
+    if not 13 <= len(nums) <= 19 or len(set(nums)) == 1 or not 2 <= nums[0] <= 6:
         return False
     total = 0
     for i, digit in enumerate(reversed(nums)):
@@ -85,7 +87,7 @@ def looks_random(token: str) -> bool:
 
 
 _KEY_WORDS = (
-    r"pass(?:word|wd|phrase)?|pwd|secret|client[_-]?secret|token|access[_-]?token|"
+    r"pass(?:word|wd|phrase)?|secret|client[_-]?secret|token|access[_-]?token|"
     r"refresh[_-]?token|auth[_-]?token|api[_-]?key|apikey|private[_-]?key"
 )
 #: Before a captured value: it may not itself be a key ("password= passwd: x" takes x),
@@ -103,7 +105,7 @@ _PATTERNS = (
         r"(?<=[a-zA-Z0-9+.-]://)(?:[^\s/:@]{1,256}):(?P<s>[^\s/@]{1,256})(?=@)"),
         words=("://",)),
     _Pattern("authorization", re.compile(
-        r"(?i)(?<![\w-])(?:proxy-)?authorization\s*[:=]\s*(?:basic|bearer|digest|token|negotiate)?"
+        r"(?i)authorization\s*[:=]\s*(?:basic|bearer|digest|token|negotiate)?"
         rf"\s*{_NOT_A_KEY}(?P<s>[^\s,;\"']{{4,}})"), words=("authoriz",)),
     _Pattern("bearer", re.compile(r"(?i)\bbearer\s+(?P<s>[A-Za-z0-9._~+/=-]{8,})"),
              words=("bearer",)),
@@ -123,16 +125,24 @@ _PATTERNS = (
     _Pattern("jwt", re.compile(
         r"\b(?P<s>eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})"),
         words=("eyj",)),
-    _Pattern("cookie", re.compile(r"(?i)(?<![\w-])(?:set-)?cookie\s*:\s*(?P<s>[^\r\n]{1,4096})"),
+    _Pattern("cookie", re.compile(r"(?i)cookie\s*:\s*(?P<s>[^\r\n]{1,4096})"),
              words=("cookie",)),
     _Pattern("session_id", re.compile(
         r"(?i)\b(?:session(?:[_-]?id)?|sid|phpsessid|jsessionid|connect\.sid|csrftoken|"
         rf"xsrf-token)\s*[=:]\s*{_NOT_A_KEY}(?P<s>[^\s;&,\"']{{8,256}})"),
         words=("sess", "sid", "csrf", "xsrf")),
     _Pattern("password", re.compile(
-        rf"(?i)(?<![\w-])(?:{_KEY_WORDS})[\"']?\s*[:=]\s*[\"']?"
-        rf"{_NOT_A_KEY}(?P<s>[^\s\"'&,;]{{3,256}})"),
-        words=("pass", "pwd", "secret", "token", "key")),
+        # After whitespace the value may not be the next key ("password= passwd: x"
+        # takes x); directly after the separator anything is the value ("pwd=token:x").
+        # Long key words match inside identifiers (db_password, adminPassword, x-token);
+        # short ones (pass, pwd, key) only after a separator ("bypass=on" stays).
+        # Not after "/": "/root/secret: Access denied" is a path. (No "pwd": in logs it
+        # is the working directory, e.g. sudo's PWD=/home/...)
+        rf"(?i)(?<!/)(?:pass(?:word|wd|phrase)|secret|token|api[_-]?key|access[_-]?key"
+        rf"|private[_-]?key|(?<![a-z0-9])(?:{_KEY_WORDS}))"
+        rf"[\"']?\s*[:=](?:\s+[\"']?{_NOT_A_KEY}|[\"']?)"
+        rf"(?P<s>[^\s\"'&,;]{{3,256}})"),
+        words=("pass", "secret", "token", "key")),
     _Pattern("credit_card", re.compile(r"(?<![\d-])(?P<s>\d(?:[ -]?\d){12,18})(?![\d-])"),
              luhn_ok, probe=_DIGITS13),
     # Not after "SHA256:" / "MD5:": key fingerprints are public and identify the key.
@@ -140,8 +150,10 @@ _PATTERNS = (
         r"(?<![\w+/=:-])(?<!SHA256:)(?<!SHA1:)(?<!MD5:)(?P<s>[A-Za-z0-9+/_=-]{32,512})(?![\w+/=-])"),
         looks_random, probe=_RUN32),
 )  # fmt: skip
+#: Every keyword occurrence, overlapping ones included (a zero-width lookahead at each
+#: position), so one keyword can never hide another that starts inside it.
 _HINT_WORDS = re.compile(
-    "|".join(sorted({re.escape(w) for p in _PATTERNS for w in p.words}, key=len, reverse=True))
+    "(?=(" + "|".join(sorted({re.escape(w) for p in _PATTERNS for w in p.words})) + "))"
 )
 
 
