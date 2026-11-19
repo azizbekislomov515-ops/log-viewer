@@ -54,6 +54,7 @@ from loglens.core.models import DiscoveryIssue, LogSource, Severity, SourceKind,
 from loglens.gui import theme as themes
 from loglens.gui.notify import CONDITIONS
 from loglens.gui.source_tree import NodeKind, TreeRole
+from loglens.security.redact import Redactor
 
 AnyIndex = QModelIndex | QPersistentModelIndex
 
@@ -453,6 +454,23 @@ class SettingsDialog(QDialog):
         self.interval.setRange(5, 3600)
         self.interval.setSuffix(" s")
         self.interval.setValue(settings.discovery_interval_s)
+        self.redact = QCheckBox("Remove passwords, tokens, keys and card numbers before storing")
+        self.redact.setChecked(settings.redact_secrets)
+        self.reversible = QCheckBox("Keep originals on this computer so I can reveal them")
+        self.reversible.setChecked(settings.redact_reversible)
+        self.reversible.setToolTip(
+            "Off (recommended): secrets are gone for good. On: they are kept in an owner-only "
+            "file under ~/.local/share/loglens/vault. Exports never contain them."
+        )
+        self.redact_patterns = QPlainTextEdit("\n".join(settings.redact_patterns))
+        self.redact_patterns.setAccessibleName("Extra secret patterns, one regex per line")
+        self.redact_patterns.setFixedHeight(50)
+        self.pattern_error = QLabel("")
+        self.pattern_error.setTextFormat(Qt.TextFormat.PlainText)
+        self.pattern_error.setProperty("role", "hint")
+        self.memory_mb = _budget_box(settings.memory_budget_mb, 128, 65_536, " MB")
+        self.disk_mb = _budget_box(settings.disk_budget_mb, 64, 1_048_576, " MB")
+        self.collectors = _budget_box(settings.max_collectors, 1, 10_000, "")
 
         form = QFormLayout()
         form.addRow("Theme", self.theme)
@@ -468,7 +486,14 @@ class SettingsDialog(QDialog):
         form.addRow("Explanations under rows", self.inline)
         form.addRow("Desktop notifications for", notify_box)
         form.addRow("Never notify for", self.muted)
-        note = QLabel("Retention changes apply the next time LogLens starts.")
+        form.addRow("Secrets", self.redact)
+        form.addRow("", self.reversible)
+        form.addRow("Also remove matches of", self.redact_patterns)
+        form.addRow("", self.pattern_error)
+        form.addRow("Memory budget", self.memory_mb)
+        form.addRow("Disk budget", self.disk_mb)
+        form.addRow("Follow at most", self.collectors)
+        note = QLabel("Retention, privacy and limit changes apply the next time LogLens starts.")
         note.setProperty("role", "hint")
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -479,7 +504,20 @@ class SettingsDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(note)
         layout.addWidget(buttons)
-        self.resize(580, 720)
+        self.resize(600, 860)
+
+    def accept(self) -> None:
+        """Save, unless a custom secret pattern is not a valid regex (a pattern that is
+        silently dropped would leave the secrets it was meant to hide)."""
+        errors = Redactor(self._patterns()).errors
+        if errors:
+            self.pattern_error.setText("Not saved, fix: " + "; ".join(errors))
+            return
+        super().accept()
+
+    def _patterns(self) -> tuple[str, ...]:
+        lines = self.redact_patterns.toPlainText().splitlines()
+        return tuple(p.strip() for p in lines if p.strip())
 
     def _add_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Rule pack folder")
@@ -500,7 +538,27 @@ class SettingsDialog(QDialog):
             inline_explanations=INLINE_MODES[self.inline.currentIndex()],
             notify_on=tuple(k for k, box in self.notify.items() if box.isChecked()),
             muted=tuple(m.strip() for m in self.muted.toPlainText().splitlines() if m.strip()),
+            redact_secrets=self.redact.isChecked(),
+            redact_reversible=self.reversible.isChecked(),
+            redact_patterns=self._patterns(),
+            memory_budget_mb=_budget(self.memory_mb),
+            disk_budget_mb=_budget(self.disk_mb),
+            max_collectors=_budget(self.collectors),
         )
+
+
+def _budget_box(value: int, low: int, high: int, suffix: str) -> QSpinBox:
+    """A spin box whose lowest value (``low - 1``) reads "No limit" and means 0."""
+    box = QSpinBox()
+    box.setRange(low - 1, high)
+    box.setSpecialValueText("No limit")
+    box.setSuffix(suffix)
+    box.setValue(value if value else low - 1)
+    return box
+
+
+def _budget(box: QSpinBox) -> int:
+    return 0 if box.value() == box.minimum() else box.value()
 
 
 class TimeRangeDialog(QDialog):

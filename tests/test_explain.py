@@ -335,16 +335,50 @@ def test_sandbox_and_render_errors_mean_no_explanation(
 ) -> None:
     engine = engine_for(
         tmp_path,
-        rule("escape", "{regex: escape}", "{{ message.__class__.__mro__ }}")
-        + rule("typeerr", "{regex: typeerr}", "{{ message + 1 }}")
+        rule("typeerr", "{regex: typeerr}", "{{ message + 1 }}")
         + rule("empty", "{regex: empty}", "{{ '' }}"),
     )
     with caplog.at_level(logging.ERROR):
-        assert engine.explain(entry("escape")) is None
-        assert engine.explain(entry("escape")) is None
+        assert engine.explain(entry("typeerr")) is None
         assert engine.explain(entry("typeerr")) is None
         assert engine.explain(entry("empty")) is None
-    assert caplog.text.count("rule failed to render") == 2  # once per broken rule
+    assert caplog.text.count("rule failed to render") == 1  # once per broken rule
+
+
+@pytest.mark.parametrize(
+    ("template", "problem"),
+    [
+        ("{{ message.__class__.__mro__ }}", "'Getattr' is not allowed"),
+        ("{{ message.upper() }}", "is not allowed"),
+        ("{% for i in range(100000) %}{% for j in range(100000) %}x{% endfor %}{% endfor %}",
+         "'For' is not allowed"),
+        ("{{ 2 ** 999999 }}", "'Pow' is not allowed"),
+        ("{{ message | center(999999999) }}", "filter 'center' is not allowed"),
+        ("{% set x = 1 %}{{ x }}", "'Assign' is not allowed"),
+        ("{{ message | truncate(99999999) }}", "filter argument too large"),
+    ],
+)
+def test_hostile_rule_templates_are_rejected_at_load(
+    tmp_path: Path, template: str, problem: str
+) -> None:
+    write_pack(tmp_path, HEADER + rule("bad", "{regex: x}", template.replace('"', '\\"')))
+    (issue,) = load_rules(tmp_path).issues
+    assert problem in issue.message
+
+
+def test_template_repetition_is_capped(tmp_path: Path) -> None:
+    engine = engine_for(tmp_path, rule("rep", "{regex: rep}", "{{ 'x' * 100000000 }}"))
+    assert engine.explain(entry("rep")) is None  # SecurityError at render: no huge string
+
+
+def test_user_pack_regex_times_out_and_is_disabled(tmp_path: Path) -> None:
+    engine = engine_for(tmp_path, rule("slow", "{regex: '(a|aa)+$'}", "slow"))
+    assert engine.rules[0].timeout is not None  # not a built-in pack: timed regex
+    hostile = entry("a" * 40 + "!")
+    for _ in range(4):
+        assert engine.explain(hostile) is None
+    assert "demo.slow" in engine._disabled
+    assert engine.explain(entry("aaaa")) is None  # disabled: not even tried
 
 
 # ---------------------------------------------------------------- example runner

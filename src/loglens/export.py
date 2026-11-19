@@ -12,6 +12,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, TextIO
 
 from loglens.core.models import Explanation, LogEntry
+from loglens.security.redact import Redactor
+from loglens.security.text import printable
 
 FORMATS: Mapping[str, str] = {"txt": "Text", "json": "JSON", "csv": "CSV"}
 CSV_COLUMNS = ("time", "source", "severity", "message", "raw", "fields")
@@ -30,10 +32,19 @@ def entry_dict(entry: LogEntry) -> dict[str, Any]:
     }
 
 
-def write_entries(entries: Iterable[LogEntry], fmt: str, handle: TextIO) -> int:
-    """Write ``entries`` in ``fmt`` (txt, json or csv); returns how many were written."""
+def write_entries(
+    entries: Iterable[LogEntry], fmt: str, handle: TextIO, redactor: Redactor | None = None
+) -> int:
+    """Write ``entries`` in ``fmt`` (txt, json or csv); returns how many were written.
+
+    Entries are redacted again (defence in depth: stored entries already are), and text
+    formats get terminal escapes and control characters neutralized, so ``cat``-ing an
+    export cannot drive a terminal. JSON escapes control characters itself.
+    """
     if fmt not in FORMATS:
         raise ValueError(f"unknown export format {fmt!r} (txt, json, csv)")
+    redactor = redactor or Redactor()
+    entries = (redactor.redact_entry(e) for e in entries)
     count = 0
     if fmt == "csv":
         writer = csv.writer(handle)
@@ -46,9 +57,9 @@ def write_entries(entries: Iterable[LogEntry], fmt: str, handle: TextIO) -> int:
                     data["time"],
                     data["source"],
                     data["severity"],
-                    _csv_safe(data["message"]),
-                    _csv_safe(data["raw"]),
-                    fields,
+                    _csv_safe(printable(data["message"])),
+                    _csv_safe(printable(data["raw"])),
+                    printable(fields),
                 ]
             )
             count += 1
@@ -62,7 +73,8 @@ def write_entries(entries: Iterable[LogEntry], fmt: str, handle: TextIO) -> int:
     else:
         for entry in entries:
             stamp = entry.timestamp.astimezone().isoformat(timespec="milliseconds")
-            handle.write(f"{stamp} {entry.severity.name:<8} {entry.source_id} {entry.message}\n")
+            text = printable(entry.message).replace("\n", "\n    ")
+            handle.write(f"{stamp} {entry.severity.name:<8} {printable(entry.source_id)} {text}\n")
             count += 1
     return count
 
@@ -76,8 +88,14 @@ def incident_report(
     pairs: Sequence[tuple[LogEntry, Explanation | None]],
     names: Mapping[str, str],
     title: str = "Incident report",
+    redactor: Redactor | None = None,
 ) -> str:
-    """Markdown bundling entries with their explanations (for tickets and chat)."""
+    """Markdown bundling entries with their explanations (for tickets and chat).
+
+    Entries are redacted again and control characters neutralized (a report is pasted
+    into chats and terminals)."""
+    redactor = redactor or Redactor()
+    pairs = [(redactor.redact_entry(e), x) for e, x in pairs]
     if not pairs:
         return f"# {title}\n\nNo entries selected.\n"
     entries = [e for e, _ in pairs]
@@ -103,8 +121,9 @@ def incident_report(
             if exp.suggested_action:
                 lines.append(f"- **Next step:** {_md(exp.suggested_action)}")
             lines.append("")
-        fence = "`" * max(3, _longest_run(entry.raw, "`") + 1)  # the line cannot close it
-        lines += [fence, entry.raw, fence, ""]
+        raw = printable(entry.raw)
+        fence = "`" * max(3, _longest_run(raw, "`") + 1)  # the line cannot close it
+        lines += [fence, raw, fence, ""]
     return "\n".join(lines)
 
 
@@ -118,4 +137,5 @@ def _longest_run(text: str, char: str) -> int:
 
 def _md(text: str) -> str:
     """Log-derived text in Markdown prose: keep it from turning into markup or links."""
+    text = printable(text, keep_newlines=False)
     return text.replace("\\", "\\\\").replace("<", "&lt;").replace("[", "\\[").replace("`", "\\`")

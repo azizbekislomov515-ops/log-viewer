@@ -127,6 +127,39 @@ class RetentionPolicy:
 
     max_age: timedelta | None = timedelta(days=7)
     max_rows_per_source: int | None = 100_000
+    #: Disk budget for stored entries; the oldest entries go first when it is exceeded.
+    max_bytes: int | None = None
+
+
+#: Environment variable holding the SQLCipher key (encryption at rest, optional).
+DB_KEY_ENV = "LOGLENS_DB_KEY"
+
+
+def _connect(path: str, key: str | None) -> sqlite3.Connection:
+    if key is None:
+        return sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+    try:
+        import sqlcipher3  # type: ignore[import-not-found]  # noqa: PLC0415
+    except ImportError:
+        raise StorageError(
+            f"{DB_KEY_ENV} is set but SQLCipher is not installed: install the 'sqlcipher3' "
+            "package (and libsqlcipher), or unset it to store logs unencrypted"
+        ) from None
+    conn: sqlite3.Connection = sqlcipher3.connect(
+        path, check_same_thread=False, isolation_level=None
+    )
+    conn.execute("PRAGMA key = " + _sql_string(key))
+    try:
+        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+    except Exception as exc:
+        conn.close()
+        raise StorageError(f"cannot open the encrypted database (wrong key?): {exc}") from None
+    return conn
+
+
+def _sql_string(text: str) -> str:
+    """``text`` as an SQL string literal (PRAGMA key takes no parameters)."""
+    return "'" + text.replace("'", "''") + "'"
 
 
 def default_db_path() -> Path:
@@ -138,18 +171,28 @@ def default_db_path() -> Path:
 class Storage:
     """The LogLens database. Use as a context manager or call ``close()``."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, key: str | None = None) -> None:
+        """Open (creating if needed) the database at ``path``.
+
+        ``key`` (default: ``$LOGLENS_DB_KEY``) encrypts the database with SQLCipher; it
+        needs the optional ``sqlcipher3`` package and fails clearly without it.
+        """
         in_memory = str(path) == ":memory:"
+        key = key if key is not None else os.environ.get(DB_KEY_ENV) or None
         if not in_memory:
             path = Path(path)
             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             path.touch(mode=0o600, exist_ok=True)  # logs are sensitive: owner-only
-        self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
+        self._conn = _connect(str(path), key)
         self._lock = threading.Lock()
         self._keys: dict[str, int] = {}
+        #: Entries deleted because the disk budget was exceeded (since opening).
+        self.budget_trimmed = 0
         mode = self._conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
         if not in_memory and mode != "wal":
             raise StorageError(f"cannot enable WAL mode on {path} (got {mode!r})")
+        self._path = None if in_memory else Path(path)
+        self._restrict_permissions()
         self._conn.execute("PRAGMA synchronous=NORMAL")  # durable at checkpoints; fast
         self._conn.execute("PRAGMA busy_timeout=5000")
         migrate(self._conn)
@@ -164,6 +207,70 @@ class Storage:
         """Close the connection."""
         with self._lock:
             self._conn.close()
+
+    def _restrict_permissions(self) -> None:
+        """Owner-only database, WAL and shared-memory files (SQLite copies the database's
+        mode, but a file created by an older version or another tool may be wider)."""
+        if self._path is None:
+            return
+        for suffix in ("", "-wal", "-shm"):
+            file = self._path.with_name(self._path.name + suffix)
+            if file.exists() and file.stat().st_mode & 0o077:
+                file.chmod(0o600)
+
+    def clear_all(self) -> None:
+        """Delete every stored entry and make the old content unrecoverable from the file:
+        deleted pages are zeroed, the file is rebuilt and the WAL truncated. Sources and
+        resume cursors are kept, so collectors do not re-import what was cleared."""
+        with self._lock:
+            self._conn.execute("PRAGMA secure_delete=ON")
+            with self._transaction():
+                self._conn.execute("DELETE FROM entries")
+                self._conn.execute("INSERT INTO entries_fts(entries_fts) VALUES ('delete-all')")
+            self._conn.execute("VACUUM")
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._conn.execute("PRAGMA secure_delete=OFF")
+        log.info("all stored entries cleared")
+
+    def used_bytes(self) -> int:
+        """Bytes of the database holding data (pages in use, not the free list)."""
+        with self._lock:
+            return self._used_bytes()
+
+    def _used_bytes(self) -> int:
+        pages = self._conn.execute("PRAGMA page_count").fetchone()[0]
+        free = self._conn.execute("PRAGMA freelist_count").fetchone()[0]
+        size: int = self._conn.execute("PRAGMA page_size").fetchone()[0]
+        return int((pages - free) * size)
+
+    def enforce_disk_budget(self, max_bytes: int) -> int:
+        """Delete the oldest entries (all sources) until the data fits ``max_bytes``.
+
+        Deletes the share of rows the overshoot suggests (down to 90% of the budget, so it
+        does not run on every pass), then merges the search index, whose deletions only
+        free space once merged. At most three rounds.
+        """
+        deleted = 0
+        with self._lock:
+            for _ in range(3):
+                used = self._used_bytes()
+                if used <= max_bytes:
+                    break
+                rows = self._conn.execute("SELECT count(*) FROM entries").fetchone()[0]
+                drop = max(1, int(rows * (1 - 0.9 * max_bytes / used)))
+                with self._transaction():
+                    deleted += self._conn.execute(
+                        "DELETE FROM entries WHERE id IN "
+                        "(SELECT id FROM entries ORDER BY id LIMIT ?)",
+                        (drop,),
+                    ).rowcount
+                    self._conn.execute("INSERT INTO entries_fts(entries_fts) VALUES ('optimize')")
+                if not rows:
+                    break
+        if deleted:
+            self.budget_trimmed += deleted
+            log.warning("disk budget exceeded: oldest entries deleted", extra={"deleted": deleted})
+        return deleted
 
     # -- writes ------------------------------------------------------------------------
 
@@ -241,6 +348,8 @@ class Storage:
                         ).rowcount
         if deleted:
             log.info("retention deleted entries", extra={"deleted": deleted})
+        if policy.max_bytes is not None:
+            deleted += self.enforce_disk_budget(policy.max_bytes)
         return deleted
 
     # -- reads -------------------------------------------------------------------------

@@ -16,6 +16,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
+from loglens.security.redact import Redactor, SecretVault
 from loglens.storage import RetentionPolicy
 
 log = logging.getLogger(__name__)
@@ -28,6 +29,12 @@ INLINE_MODES = ("off", "compact", "full")
 def config_dir() -> Path:
     """``$XDG_CONFIG_HOME/loglens`` (default ``~/.config/loglens``)."""
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "loglens"
+
+
+def data_dir() -> Path:
+    """``$XDG_DATA_HOME/loglens`` (default ``~/.local/share/loglens``)."""
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(base) / "loglens"
 
 
@@ -54,6 +61,21 @@ class Settings:
     notify_on: tuple[str, ...] = ("critical", "detection", "restart_loop")
     #: Sources that never raise desktop notifications.
     muted: tuple[str, ...] = ()
+    #: Remove secrets before anything is stored (strongly recommended).
+    redact_secrets: bool = True
+    #: Extra regexes whose matches are redacted (e.g. internal ticket tokens).
+    redact_patterns: tuple[str, ...] = ()
+    #: Keep originals in an owner-only local vault so they can be revealed in the app.
+    redact_reversible: bool = False
+    #: Resource budgets (0 = unlimited).
+    memory_budget_mb: int = 1024
+    disk_budget_mb: int = 2048
+    max_collectors: int = 64
+
+    def redactor(self) -> Redactor:
+        """The secret redactor these settings describe."""
+        vault = SecretVault(data_dir() / "vault") if self.redact_reversible else None
+        return Redactor(self.redact_patterns, vault=vault, enabled=self.redact_secrets)
 
     @property
     def retention(self) -> RetentionPolicy:
@@ -61,6 +83,7 @@ class Settings:
         return RetentionPolicy(
             max_age=timedelta(days=self.retention_days) if self.retention_days > 0 else None,
             max_rows_per_source=self.max_rows_per_source or None,
+            max_bytes=self.disk_budget_mb * 1024 * 1024 or None,
         )
 
     def excluded(self, source_id: str) -> bool:
@@ -107,6 +130,8 @@ def save_settings(settings: Settings, path: Path | None = None) -> Path:
         "rules": ("rule_dirs",),
         "discovery": ("discovery_exclude", "discovery_interval_s", "pinned"),
         "notifications": ("notify_on", "muted"),
+        "privacy": ("redact_secrets", "redact_patterns", "redact_reversible"),
+        "limits": ("memory_budget_mb", "disk_budget_mb", "max_collectors"),
     }
     lines = ["# LogLens settings. Edited by Settings in the app; safe to edit by hand.", ""]
     for section, keys in sections.items():
@@ -122,7 +147,9 @@ def save_settings(settings: Settings, path: Path | None = None) -> Path:
 
 
 def _coerce(value: Any, default: Any) -> Any:
-    if isinstance(default, int):  # bool is an int too
+    if isinstance(default, bool):
+        return value if isinstance(value, bool) else None
+    if isinstance(default, int):
         return (
             value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
         )
@@ -136,6 +163,8 @@ def _coerce(value: Any, default: Any) -> Any:
 
 
 def _toml(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
     if isinstance(value, str):

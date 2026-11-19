@@ -43,14 +43,23 @@ from loglens.core.models import Explanation, LogEntry, SourceStatus
 from loglens.explain.overview import Bucket, CardResult, OverviewReport
 from loglens.gui import theme as themes
 from loglens.gui.analyst import WINDOWS, ComposeModel, OverviewModel, ServiceSummary
+from loglens.security.text import printable
 
 STATE_WORDS = {"healthy": "Healthy", "degraded": "Degraded", "failing": "Failing", "quiet": "Quiet"}
 _HIDDEN_FIELD_PREFIXES = ("_", "__")
 
 
+class SafeLabel(QLabel):
+    """A plain-text QLabel whose ``setText`` neutralizes control and bidi characters."""
+
+    def setText(self, text: str) -> None:
+        """Set the text, made safe to display."""
+        super().setText(printable(text))
+
+
 def plain_label(text: str = "", *, role: str | None = None, wrap: bool = False) -> QLabel:
     """A QLabel that never interprets its text as HTML."""
-    label = QLabel(text)
+    label = SafeLabel(printable(text))
     label.setTextFormat(Qt.TextFormat.PlainText)
     label.setWordWrap(wrap)
     if role:
@@ -224,11 +233,11 @@ class ExplainPanel(QWidget):
         rows.insert(1, ("severity", entry.severity.name.lower()))
         self.fields.setRowCount(len(rows))
         for i, (key, value) in enumerate(rows):
-            self.fields.setItem(i, 0, QTableWidgetItem(str(key)))
-            self.fields.setItem(i, 1, QTableWidgetItem(str(value)))
+            self.fields.setItem(i, 0, QTableWidgetItem(printable(str(key))))
+            self.fields.setItem(i, 1, QTableWidgetItem(printable(str(value))))
         self.fields.resizeRowsToContents()
         self.fields.setFixedHeight(min(26 * len(rows) + 30, 320))
-        self.raw.setPlainText(entry.raw)
+        self.raw.setPlainText(printable(entry.raw))  # copying cannot carry terminal escapes
 
 
 # ---------------------------------------------------------------------- timeline
@@ -371,7 +380,9 @@ class _TopRows(QWidget):
             bar.setAlpha(45)
             painter.fillRect(QRectF(0, y + 2, (self.width() - 2) * count / biggest, 18), bar)
             painter.setPen(QColor(t.text))
-            value = fm.elidedText(row[0], Qt.TextElideMode.ElideMiddle, self.width() - 70)
+            value = fm.elidedText(
+                printable(row[0]), Qt.TextElideMode.ElideMiddle, self.width() - 70
+            )
             painter.drawText(
                 QRectF(6, y, self.width() - 70, 22), Qt.AlignmentFlag.AlignVCenter, value
             )

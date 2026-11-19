@@ -8,14 +8,18 @@ cached, so a line only walks rules that can apply to it.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from loglens.collectors import source_from_id
 from loglens.core.models import Explanation, LogEntry, LogSource, SourceKind
-from loglens.explain.rules import LoadIssue, Pack, Rule, RuleSet, load_rules
+from loglens.explain.rules import LoadIssue, Pack, Rule, RuleSet, RuleTimeoutError, load_rules
 
 log = logging.getLogger(__name__)
+
+#: A rule whose regex times out this many times is disabled for the session.
+MAX_RULE_TIMEOUTS = 3
 
 
 class ExplanationEngine:
@@ -30,6 +34,9 @@ class ExplanationEngine:
         ] = {}
         self._sources: dict[str, LogSource] = {}
         self._broken: set[str] = set()
+        self._timeouts: Counter[str] = Counter()
+        #: Rules switched off because their regex kept timing out (hostile or broken pack).
+        self._disabled: set[str] = set()
 
     @classmethod
     def from_directory(
@@ -84,8 +91,18 @@ class ExplanationEngine:
         if candidates is None:
             candidates = cached[1][key] = self._select(source, *key)
         for rule in candidates:
+            if rule.id in self._disabled:
+                continue
             try:
                 explanation = rule.apply(entry, source.display_name)
+            except RuleTimeoutError:
+                self._timeouts[rule.id] += 1
+                if self._timeouts[rule.id] >= MAX_RULE_TIMEOUTS:
+                    self._disabled.add(rule.id)
+                    log.warning(
+                        "rule disabled: its regex keeps timing out", extra={"rule": rule.id}
+                    )
+                continue
             except Exception:  # a template bug must not cost the line its display
                 if rule.id not in self._broken:
                     self._broken.add(rule.id)

@@ -81,6 +81,7 @@ def launch(
             retention=None,
             normalizer=DemoNormalizer(),
             discovery_interval=settings.discovery_interval_s,
+            redactor=settings.redactor(),
         )
     else:
         from loglens.collectors import default_collectors  # noqa: PLC0415
@@ -92,6 +93,8 @@ def launch(
             default_collectors(),
             retention=settings.retention,
             discovery_interval=settings.discovery_interval_s,
+            redactor=settings.redactor(),
+            max_sources=settings.max_collectors or 10_000,
         )
     # The reader opens its connection lazily (first job), after the backend migrated the DB.
     worker = DbWorker(db_path)

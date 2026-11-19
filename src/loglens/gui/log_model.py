@@ -39,6 +39,7 @@ from PySide6.QtCore import (
 
 from loglens.core.models import Explanation, LogEntry, Severity
 from loglens.gui.workers import Worker
+from loglens.security.text import printable
 from loglens.storage import EntryQuery, Storage
 
 log = logging.getLogger(__name__)
@@ -238,7 +239,7 @@ class LogTableModel(QAbstractTableModel):
                 return entry.source_id
             case Qt.ItemDataRole.ToolTipRole if index.column() == Column.MESSAGE:
                 text = entry.message if len(entry.message) < 2000 else entry.message[:2000] + "…"
-                return plain_tooltip(text)
+                return plain_tooltip(printable(text))
             case Qt.ItemDataRole.AccessibleTextRole:
                 return (
                     f"{entry.severity.name.lower()}, {self._display(entry, Column.TIME)}, "
@@ -364,6 +365,17 @@ class LogTableModel(QAbstractTableModel):
         self.stats["appended"] += len(fresh)
         self.rowsAppended.emit(len(fresh))
         self.blocksChanged.emit()
+
+    def shed_memory(self, keep_rows: int) -> int:
+        """Under memory pressure: drop cached entries/explanations and all but the newest
+        ``keep_rows`` rows (they stay in the database). Returns rows dropped."""
+        self._cache.clear()
+        self._explanations.clear()
+        self._requested.clear()
+        drop = max(0, len(self._ids) - keep_rows)
+        if drop:
+            self._drop_head(drop)
+        return drop
 
     def _drop_head(self, count: int) -> None:
         count = min(count, len(self._ids))
@@ -501,6 +513,10 @@ class LogTableModel(QAbstractTableModel):
     # ------------------------------------------------------------------ display
 
     def _display(self, entry: LogEntry, column: Column) -> str:
+        """Display text: log content is hostile, so escapes/controls are neutralized."""
+        return printable(self._display_raw(entry, column))
+
+    def _display_raw(self, entry: LogEntry, column: Column) -> str:
         if column == Column.TIME:
             local = entry.timestamp.astimezone()
             return local.strftime("%m-%d %H:%M:%S.") + f"{local.microsecond // 1000:03d}"

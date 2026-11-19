@@ -28,7 +28,7 @@ from loglens.parsers.severity import SeverityInferrer
 
 #: Field names only the normalizer, assembler or a collector may set: rules trust them
 #: (``stream: events`` marks Docker's own lifecycle events), so log text must not claim them.
-_RESERVED = frozenset({"parser", "truncated", "timestamp_source", "lines", "stream"})
+_RESERVED = frozenset({"parser", "truncated", "timestamp_source", "lines", "stream", "redacted"})
 #: Longest message kept; anything longer is cut and flagged ``truncated``.
 MAX_MESSAGE_CHARS = 64 * 1024
 

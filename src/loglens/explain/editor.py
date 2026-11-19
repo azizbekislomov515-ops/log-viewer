@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
+import regex
 import yaml
 
 from loglens.config import config_dir
@@ -23,6 +24,7 @@ from loglens.core.models import Category, Explanation, LogEntry, LogSource, Seve
 from loglens.explain import schema
 from loglens.explain.rules import (
     MAX_MATCH_CHARS,
+    RULE_TIMEOUT_S,
     Selector,
     _compile,
     _RuleError,
@@ -183,15 +185,18 @@ def preview(
     """Validate, compile and run the draft on ``entry`` (and ``counter``)."""
     problems: list[str] = []
     groups: dict[str, str] = {}
-    try:
-        pattern = re.compile(draft.regex)
-    except re.error as exc:
+    try:  # typed by the user: the regex module, so a catastrophic pattern times out
+        pattern = regex.compile(draft.regex)
+    except regex.error as exc:
         return Preview((f"regex: {exc}",), {}, None)
     target = entry.raw if draft.match_field == "raw" else entry.message
     if draft.match_field not in ("message", "raw"):
         value = entry.fields.get(draft.match_field)
         target = "" if value is None else str(value)
-    found = pattern.search(target, 0, MAX_MATCH_CHARS)
+    try:
+        found = pattern.search(target, 0, MAX_MATCH_CHARS, timeout=RULE_TIMEOUT_S)
+    except TimeoutError:
+        return Preview(("regex: too slow on this line (catastrophic backtracking)",), {}, None)
     if found is None:
         problems.append("the regex does not match this line")
     else:

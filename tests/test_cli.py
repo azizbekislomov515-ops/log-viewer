@@ -87,7 +87,7 @@ def test_table_neutralizes_terminal_escapes() -> None:
     assert "\x1b" not in text
     assert "\x9b" not in text
     assert "\x07" not in text
-    assert "grp?[1m" in text
+    assert "grp" in text and "[1m" not in text  # sequences are removed whole
 
 
 # --- Phase 2: tail / search / helpers ---------------------------------------------------
@@ -127,7 +127,7 @@ def test_source_from_id() -> None:
 def test_format_entry() -> None:
     e = LogEntry(1, "docker:web", NOW, Severity.ERROR, "bad\x1b[31m", "", {"stream": "stderr"})
     line = format_entry(e, with_source=True)
-    assert line.endswith(" ERROR    [docker:web] (stderr) bad?[31m\n")
+    assert line.endswith(" ERROR    [docker:web] (stderr) bad\n")
     assert "\x1b" not in line
 
 

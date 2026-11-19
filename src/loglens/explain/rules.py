@@ -31,9 +31,11 @@ from types import MappingProxyType
 from typing import Any
 
 import jsonschema
+import regex as regex_engine
 import yaml
 from jinja2 import StrictUndefined, Template, TemplateSyntaxError, meta, nodes
-from jinja2.sandbox import SandboxedEnvironment
+from jinja2.exceptions import SecurityError
+from jinja2.sandbox import ImmutableSandboxedEnvironment, SandboxedEnvironment
 
 from loglens.core.models import Category, Explanation, LogEntry, LogSource, Severity
 from loglens.explain import schema
@@ -115,7 +117,7 @@ class Rule:
     line: int
     selector: Selector
     conditions: tuple[tuple[str, frozenset[str]], ...]
-    regex: re.Pattern[str] | None
+    regex: Any  # a compiled ``regex`` pattern (re-compatible syntax, supports timeouts)
     on: str
     extract: tuple[tuple[str, bool], ...]
     title: Template
@@ -128,7 +130,17 @@ class Rule:
     references: tuple[str, ...]
     tags: tuple[str, ...]
     examples: tuple[Example, ...] = ()
+    #: Per-line regex timeout (None for trusted built-in packs, which use ``re``).
+    timeout: float | None = None
     counter_examples: tuple[Example, ...] = ()
+
+    def _search(self, target: str) -> Any:
+        if self.timeout is None:  # trusted built-in pack, plain re
+            return self.regex.search(target, 0, MAX_MATCH_CHARS)
+        try:
+            return self.regex.search(target, 0, MAX_MATCH_CHARS, timeout=self.timeout)
+        except TimeoutError:
+            raise RuleTimeoutError(self.id) from None
 
     def apply(self, entry: LogEntry, source_name: str) -> Explanation | None:
         """Explain ``entry`` if this rule matches it (selector already checked)."""
@@ -140,7 +152,9 @@ class Rule:
         groups: dict[str, Any] = {}
         if self.regex is not None:
             target = self._target(entry)
-            if target is None or (m := self.regex.search(target, 0, MAX_MATCH_CHARS)) is None:
+            if target is None:
+                return None
+            if (m := self._search(target)) is None:
                 return None
             groups = m.groupdict()
         context: dict[str, Any] = {"source": source_name, "message": _clip(entry.message)}
@@ -272,17 +286,91 @@ def load_rules(
         for path in sorted(folder.glob("*.yaml")):
             if path.name in NOT_PACKS:
                 continue
-            pack = _load_pack(path, env, issues, seen, wanted)
+            trusted = folder.resolve() == DEFAULT_RULES_DIR.resolve()
+            pack = _load_pack(path, env, issues, seen, wanted, trusted=trusted)
             if pack is not None:
                 loaded.append(pack)
     return RuleSet(tuple(loaded), tuple(issues))
 
 
+class RuleSandbox(ImmutableSandboxedEnvironment):
+    """Rule packs are untrusted input. On top of Jinja's immutable sandbox (no access to
+    internals, no mutation), templates may only use ``ALLOWED_NODES`` and
+    ``ALLOWED_FILTERS`` (checked at load time: no loops, macros, calls or attribute
+    access), and ``*`` may not build huge strings or lists."""
+
+    intercepted_binops = frozenset({"*"})
+
+    def call_binop(self, context: Any, operator: str, left: Any, right: Any) -> Any:
+        """Refuse repetition that would allocate more than ``MAX_REPEAT`` items."""
+        if operator == "*":
+            for seq, times in ((left, right), (right, left)):
+                if (
+                    isinstance(seq, str | list | tuple)
+                    and isinstance(times, int)
+                    and len(seq) * max(times, 0) > MAX_REPEAT
+                ):
+                    raise SecurityError("repetition too large in a rule template")
+        return super().call_binop(context, operator, left, right)
+
+
 def make_environment() -> SandboxedEnvironment:
     """The Jinja2 sandbox rule templates run in (shared by the loader and the editor)."""
-    env = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
+    env = RuleSandbox(undefined=StrictUndefined, autoescape=False)
     env.filters["shquote"] = _shquote
+    env.filters["thousands"] = _thousands
     return env
+
+
+def _thousands(value: Any) -> str:
+    """Jinja filter: ``8708530`` -> ``8,708,530`` (non-numbers unchanged)."""
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+#: Template constructs a rule may use. No For (a loop can hang the app even in a
+#: sandbox), no Call/Getattr (no methods on objects), no Pow, no Macro/Include/Assign.
+ALLOWED_NODES: tuple[type[nodes.Node], ...] = (
+    nodes.Template, nodes.Output, nodes.TemplateData, nodes.Name, nodes.Const, nodes.Filter,
+    nodes.Test, nodes.If, nodes.CondExpr, nodes.Compare, nodes.Operand, nodes.And, nodes.Or,
+    nodes.Not, nodes.Getitem, nodes.Slice, nodes.Add, nodes.Sub, nodes.Mul, nodes.Div,
+    nodes.FloorDiv, nodes.Mod, nodes.Neg, nodes.Pos, nodes.Concat, nodes.Tuple, nodes.List,
+)  # fmt: skip
+ALLOWED_FILTERS = frozenset({
+    "shquote", "thousands", "int", "float", "round", "filesizeformat", "lower", "upper",
+    "capitalize", "title", "trim", "default", "length", "replace", "truncate", "abs",
+    "string", "first", "last",
+})  # fmt: skip
+#: Longest string/list a template may build with ``*``.
+MAX_REPEAT = 10_000
+#: A rule's regex gives up on a line after this long (and the engine disables the rule
+#: after ``engine.MAX_RULE_TIMEOUTS`` such timeouts).
+RULE_TIMEOUT_S = 0.02
+
+
+class RuleTimeoutError(RuntimeError):
+    """A rule's regex took longer than ``RULE_TIMEOUT_S`` on a line."""
+
+
+def _template_violation(ast: nodes.Template) -> str | None:
+    """Why a template is not allowed, or None if it only uses safe constructs."""
+    for node in ast.find_all(nodes.Node):
+        if not isinstance(node, ALLOWED_NODES):
+            return f"'{type(node).__name__}' is not allowed in rule templates"
+        if isinstance(node, nodes.Filter) and node.name not in ALLOWED_FILTERS:
+            return f"filter '{node.name}' is not allowed in rule templates"
+        if isinstance(node, nodes.Filter) and (too_big := _small_constants(node.args)):
+            return too_big
+    return None
+
+
+def _small_constants(args: list[nodes.Expr]) -> str | None:
+    for arg in args:
+        if isinstance(arg, nodes.Const) and isinstance(arg.value, int) and arg.value > MAX_REPEAT:
+            return "filter argument too large"
+    return None
 
 
 class _RuleError(Exception):
@@ -297,6 +385,8 @@ def _load_pack(
     issues: list[LoadIssue],
     seen: set[str],
     wanted: set[str] | None,
+    *,
+    trusted: bool = False,
 ) -> Pack | None:
     try:
         text = path.read_text(encoding="utf-8")
@@ -347,6 +437,7 @@ def _load_pack(
                 pack_selector=pack_selector,
                 default_source=data["example_source"],
                 env=env,
+                trusted=trusted,
             )
         except _RuleError as exc:
             issues.append(LoadIssue(path, _line(root, [*where, *exc.path]), str(exc), rule_id))
@@ -424,13 +515,17 @@ def _compile(
     pack_selector: Selector,
     default_source: str,
     env: SandboxedEnvironment,
+    trusted: bool = False,
 ) -> Rule:
     match = raw["match"]
     regex = None
     if "regex" in match:
+        # Built-in packs use the fast re engine (their regexes are checked against ReDoS
+        # payloads in CI); packs from users or other folders are untrusted and use the
+        # regex module, whose matches time out.
         try:
-            regex = re.compile(match["regex"])
-        except re.error as exc:
+            regex = (re if trusted else regex_engine).compile(match["regex"])
+        except (regex_engine.error, re.error) as exc:
             raise _RuleError(f"bad regex: {exc}", ["match", "regex"]) from None
     extract = tuple((name, True) for name in raw.get("extract", ())) + tuple(
         (name, False) for name in raw.get("optional", ())
@@ -484,6 +579,7 @@ def _compile(
             )
             for ex in raw["counter_examples"]
         ),
+        timeout=None if trusted else RULE_TIMEOUT_S,
     )
 
 
@@ -494,10 +590,16 @@ def _template(
         return None
     try:
         ast = env.parse(source)
-        unknown = meta.find_undeclared_variables(ast) - known
-        template = env.from_string(source)
     except TemplateSyntaxError as exc:
         raise _RuleError(f"bad template: {exc.message}", [key]) from None
+    # Checked before compiling: Jinja folds constants at compile time (``2 ** 999999``).
+    if (violation := _template_violation(ast)) is not None:
+        raise _RuleError(violation, [key])
+    unknown = meta.find_undeclared_variables(ast) - known
+    try:
+        template = env.from_string(source)
+    except (TemplateSyntaxError, ValueError, OverflowError, MemoryError) as exc:
+        raise _RuleError(f"bad template: {exc}", [key]) from None
     if key == "action" and not _all_shell_quoted(ast):
         raise _RuleError(
             "every value in 'action' must end with '| shquote': actions hold commands admins "

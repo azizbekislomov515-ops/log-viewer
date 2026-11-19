@@ -8,6 +8,7 @@ is not looking at into unread badges. Database reads go through the ``Worker``.
 from __future__ import annotations
 
 import functools
+import gc
 import json
 import logging
 import os
@@ -45,6 +46,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QSplitter,
     QStackedWidget,
     QTabBar,
@@ -56,7 +58,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from loglens.config import Settings, save_settings
+from loglens.config import Settings, data_dir, save_settings
 from loglens.core.models import DiscoveryIssue, LogEntry, LogSource, ServiceGroup, Severity
 from loglens.gui import theme as themes
 from loglens.gui.insights_ui import Insights
@@ -94,6 +96,21 @@ RANGES: tuple[tuple[str, str, timedelta | None], ...] = (
     ("24h", "Last 24 h", timedelta(hours=24)),
     ("custom", "Custom…", None),
 )
+
+
+#: How often the memory governor checks the process size.
+MEMORY_CHECK_MS = 5000
+#: Rows each view keeps loaded when the memory budget is exceeded.
+SHED_KEEP_ROWS = 50_000
+
+
+def rss_bytes() -> int | None:
+    """Resident memory of this process (Linux ``/proc/self/statm``), or None."""
+    try:
+        resident = int(Path("/proc/self/statm").read_text().split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+    return resident * os.sysconf("SC_PAGE_SIZE")
 
 
 class BackendLike(Protocol):
@@ -371,6 +388,10 @@ class MainWindow(QMainWindow):
         self._drain_timer.setInterval(DRAIN_MS)
         self._drain_timer.timeout.connect(self.drain)
         self._drain_timer.start()
+        self._memory_timer = QTimer(self)
+        self._memory_timer.setInterval(MEMORY_CHECK_MS)
+        self._memory_timer.timeout.connect(self.check_memory)
+        self._memory_timer.start()
         self.apply_theme(self._theme)
 
     # ------------------------------------------------------------------ construction
@@ -426,7 +447,25 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget(self)
         self.stack.addWidget(self.empty)
         self.stack.addWidget(self.tabs)
-        self.setCentralWidget(self.stack)
+        # Window-wide banner: shown when a resource limit forced LogLens to degrade.
+        self.limits_banner = QFrame(self)
+        self.limits_banner.setObjectName("banner")
+        self.limits_text = QLabel(self.limits_banner)
+        self.limits_text.setObjectName("bannerText")
+        self.limits_text.setTextFormat(Qt.TextFormat.PlainText)
+        self.limits_text.setWordWrap(True)
+        banner_layout = QHBoxLayout(self.limits_banner)
+        banner_layout.setContentsMargins(10, 4, 10, 4)
+        banner_layout.addWidget(self.limits_text, 1)
+        self.limits_banner.hide()
+        self._degraded: dict[str, str] = {}
+        central = QWidget(self)
+        column = QVBoxLayout(central)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        column.addWidget(self.limits_banner)
+        column.addWidget(self.stack, 1)
+        self.setCentralWidget(central)
 
     def _build_toolbar(self) -> None:
         bar = QToolBar("Main", self)
@@ -520,6 +559,8 @@ class MainWindow(QMainWindow):
                             ("full", "Full: a second line")):  # fmt: skip
             density.addAction(label, functools.partial(self.insights.set_inline_mode, mode))
         menu.addAction("Explain panel", QKeySequence("Ctrl+E"), self.toggle_explain_panel)
+        menu.addSeparator()
+        menu.addAction("Clear all data…", self.clear_all_data)
         menu_btn.setMenu(menu)
         menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.toolbar = bar
@@ -987,6 +1028,80 @@ class MainWindow(QMainWindow):
         self.stored_label.setText(f"{stats.stored:,} stored")
         self._collector_errors = dict(stats.collector_errors)
         self._update_issues()
+        trimmed = getattr(stats, "budget_trimmed", 0)
+        refused = getattr(stats, "refused", ())
+        self.set_degraded(
+            "disk",
+            f"Disk budget reached: the oldest {trimmed:,} entries were deleted to stay under "
+            f"{self.settings.disk_budget_mb:,} MB (Settings > Limits)."
+            if trimmed
+            else None,
+        )
+        self.set_degraded(
+            "collectors",
+            f"Collector limit reached: {len(refused)} source(s) are not followed "
+            f"(limit {self.settings.max_collectors}; Settings > Limits)."
+            if refused
+            else None,
+        )
+
+    def set_degraded(self, reason: str, message: str | None) -> None:
+        """Show (or, with ``None``, clear) one reason in the resource-limit banner."""
+        if message is None:
+            self._degraded.pop(reason, None)
+        else:
+            self._degraded[reason] = message
+        self.limits_text.setText("  ".join(self._degraded.values()))
+        self.limits_banner.setVisible(bool(self._degraded))
+
+    def check_memory(self, rss: int | None = None) -> None:
+        """Memory governor: over the budget, shed caches and the oldest loaded rows of
+        every tab (newest ``SHED_KEEP_ROWS`` stay; everything remains in the database)."""
+        budget = self.settings.memory_budget_mb * 1024 * 1024
+        rss = rss_bytes() if rss is None else rss
+        if not budget or rss is None or rss <= budget:
+            return
+        dropped = sum(
+            view.model.shed_memory(SHED_KEEP_ROWS) for tab in self._all_tabs() for view in tab.views
+        )
+        gc.collect()
+        log.warning("memory budget exceeded", extra={"rss": rss, "rows_dropped": dropped})
+        self.set_degraded(
+            "memory",
+            f"Memory budget reached ({rss // 2**20:,} of {self.settings.memory_budget_mb:,} MB): "
+            f"caches cleared and the oldest {dropped:,} loaded rows unloaded. They are still "
+            "stored; reopen the tab or search to see them.",
+        )
+
+    def clear_all_data(self, *, confirm: bool = True) -> None:
+        """Delete every stored entry (and the reveal vault), after asking."""
+        if confirm:
+            answer = QMessageBox.warning(
+                self,
+                "Clear all data",
+                "Delete every log entry LogLens has stored, and any secrets kept for "
+                "reveal? This cannot be undone. Settings and rules are kept.",
+                QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Discard,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Discard:
+                return
+
+        def done(_: object) -> None:
+            vault = data_dir() / "vault"
+            for name in ("vault.json", "vault.key"):
+                (vault / name).unlink(missing_ok=True)
+            for tab in self._all_tabs():
+                for view in tab.views:
+                    view.model.reload()
+            self.set_degraded("disk", None)
+            self.statusBar().showMessage("All stored log data was deleted", 8000)
+
+        self.worker.submit(
+            lambda storage: storage.clear_all(),
+            done,
+            lambda exc: self.statusBar().showMessage(f"Could not clear data: {exc}", 15000),
+        )
 
     def _update_issues(self) -> None:
         self.issues_panel.set_issues(self._issues, self._collector_errors)

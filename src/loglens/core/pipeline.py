@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING
 
 from loglens.core.models import LogEntry, LogSource, RawRecord, SourceKind
 from loglens.parsers import MultilineAssembler, Normalizer
+from loglens.security.redact import Redactor
 from loglens.storage import RetentionPolicy, Storage
 
 if TYPE_CHECKING:
@@ -77,7 +78,12 @@ class PipelineStats:
     batches: int = 0
     storage_errors: int = 0
     max_queue: int = 0
+    redacted: int = 0
+    #: Entries deleted because the disk budget was exceeded.
+    budget_trimmed: int = 0
     collector_errors: dict[str, str] = field(default_factory=dict)
+    #: Sources refused because ``max_sources`` were already followed.
+    refused: list[str] = field(default_factory=list)
 
 
 class IngestPipeline:
@@ -96,6 +102,8 @@ class IngestPipeline:
         retention_interval: float = 60.0,
         normalizer: Callable[[LogSource, RawRecord], LogEntry] | None = None,
         assembler: MultilineAssembler | None = None,
+        redactor: Redactor | None = None,
+        max_sources: int = 64,
     ) -> None:
         self._storage = storage
         self._collectors = dict(collectors)
@@ -103,6 +111,9 @@ class IngestPipeline:
         self._retention = retention
         self._retention_interval = retention_interval
         self._normalize = normalizer or Normalizer()
+        #: Secrets are removed here, before storage, the ring buffers and subscribers.
+        self._redactor = redactor
+        self._max_sources = max_sources
         self._assembler = assembler or MultilineAssembler()
         self._sources: dict[str, LogSource] = {}
         self._queue: asyncio.Queue[RawRecord | None] = asyncio.Queue(limits.queue_size)
@@ -150,6 +161,11 @@ class IngestPipeline:
         """Start collecting ``source``. Resumes from the stored cursor when there is one;
         otherwise starts at ``since`` / the last ``lines`` lines / now."""
         if source.id in self._tasks:
+            return
+        if len(self._tasks) >= self._max_sources:
+            if source.id not in self.stats.refused:
+                self.stats.refused.append(source.id)
+            log.warning("collector limit reached", extra={"source": source.id})
             return
         self._sources[source.id] = source
         self._tasks[source.id] = asyncio.create_task(
@@ -243,6 +259,9 @@ class IngestPipeline:
         if not events:
             return
         entries = [self._normalize(self._sources[r.source_id], r) for r in events]
+        if self._redactor is not None:
+            entries = [self._redactor.redact_entry(e) for e in entries]
+            self.stats.redacted += sum(1 for e in entries if "redacted" in e.fields)
         # Only emitted events carry cursors, so a line still pending in the assembler is
         # never covered by a stored cursor. dict keeps the last cursor per source.
         cursors = {r.source_id: r.cursor for r in events if r.cursor is not None}
@@ -266,6 +285,7 @@ class IngestPipeline:
         while True:
             try:
                 await asyncio.to_thread(self._storage.apply_retention, policy)
+                self.stats.budget_trimmed = self._storage.budget_trimmed
             except Exception:
                 log.exception("retention failed")
             await asyncio.sleep(self._retention_interval)

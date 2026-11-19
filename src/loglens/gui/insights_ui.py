@@ -31,6 +31,7 @@ from loglens.gui.analyst import (
 from loglens.gui.dialogs import ExportDialog, RuleEditorDialog
 from loglens.gui.insight_widgets import ComposeDashboard, ExplainPanel, OverviewPage
 from loglens.gui.notify import DesktopNotifier, NotificationCenter
+from loglens.security.redact import Redactor
 from loglens.storage import Storage
 
 if TYPE_CHECKING:
@@ -265,8 +266,11 @@ class Insights:
 
         def done(entries: list[LogEntry]) -> None:
             pairs = [(e, self.explain(e)) for e in entries]
-            text = incident_report(
-                pairs, self.w.tree_model.display_names(), f"Incident: {tab.state.title}"
+            text = incident_report(  # redacted again, irreversibly
+                pairs,
+                self.w.tree_model.display_names(),
+                f"Incident: {tab.state.title}",
+                redactor=Redactor(self.w.settings.redact_patterns),
             )
             QGuiApplication.clipboard().setText(text)
             self.w.statusBar().showMessage(
@@ -317,6 +321,7 @@ class Insights:
         else:
             ids = []
         query = replace(model.query, since=since, until=until)
+        redactor = Redactor(self.w.settings.redact_patterns)  # irreversible for exports
 
         def job(storage: Storage) -> int:
             chosen = list(storage.entry_ids(query)[0]) if scope == "range" else ids
@@ -326,7 +331,7 @@ class Insights:
                     yield from storage.entries_by_id(chunk)
 
             with path.open("w", encoding="utf-8", newline="" if fmt == "csv" else None) as handle:
-                return write_entries(entries(), fmt, handle)
+                return write_entries(entries(), fmt, handle, redactor)
 
         self.w.statusBar().showMessage(f"Exporting to {path}…")
         self.w.worker.submit(

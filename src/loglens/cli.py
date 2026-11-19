@@ -27,11 +27,10 @@ from loglens.explain.examples import run_examples
 from loglens.explain.insights import analyze
 from loglens.parsers import MultilineAssembler, Normalizer
 from loglens.parsers.multiline import assemble_stream
+from loglens.security.text import printable
 from loglens.storage import Storage, StorageError, default_db_path
 
 _MAX_NAME_WIDTH = 40
-# C0 controls, DEL and C1 controls -> "?" so log-derived text can't drive the terminal.
-_CONTROL_CHARS = dict.fromkeys([*range(0x20), *range(0x7F, 0xA0)], "?")
 
 
 def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 (command dispatch)
@@ -374,7 +373,7 @@ def render_table(registry: SourceRegistry) -> str:
 
 def _safe(text: str) -> str:
     """Neutralize terminal escape sequences in untrusted text (labels, stderr, descriptions)."""
-    return text.translate(_CONTROL_CHARS)
+    return printable(text, keep_newlines=False)
 
 
 def _detail(source: LogSource) -> str:

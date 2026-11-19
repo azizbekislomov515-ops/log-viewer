@@ -331,7 +331,7 @@ rules:
     match:
       fields: {event: [db_loaded, db_reloaded]}
     extract: [signatures]
-    template: clamd loaded its virus database ({{ "{:,}".format(signatures) }} signatures) and is ready to scan.
+    template: clamd loaded its virus database ({{ signatures | thousands }} signatures) and is ready to scan.
     category: info
     severity_override: info
     examples:
@@ -463,7 +463,7 @@ rules:
     match:
       fields: {event: db_updated}
     extract: [database, version, signatures]
-    template: freshclam downloaded a newer {{ database }} (version {{ version }}, {{ "{:,}".format(signatures) }} signatures).
+    template: freshclam downloaded a newer {{ database }} (version {{ version }}, {{ signatures | thousands }} signatures).
     category: info
     tags: [update]
     severity_override: info
@@ -495,7 +495,7 @@ rules:
     match:
       fields: {event: db_update_done}
     extract: [signatures, mirror]
-    template: freshclam finished updating from {{ mirror }}; the database now has {{ "{:,}".format(signatures) }} signatures.
+    template: freshclam finished updating from {{ mirror }}; the database now has {{ signatures | thousands }} signatures.
     category: info
     tags: [update]
     severity_override: info

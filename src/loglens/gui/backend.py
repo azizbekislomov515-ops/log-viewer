@@ -34,6 +34,7 @@ from loglens.core.models import (
 )
 from loglens.core.pipeline import IngestPipeline, PipelineLimits
 from loglens.core.registry import SourceRegistry
+from loglens.security.redact import Redactor
 from loglens.storage import RetentionPolicy, Storage
 
 log = logging.getLogger(__name__)
@@ -51,6 +52,10 @@ class BackendStats:
     stored: int = 0
     queued: int = 0
     collector_errors: Mapping[str, str] = field(default_factory=dict)
+    #: Entries deleted because the disk budget was exceeded.
+    budget_trimmed: int = 0
+    #: Sources not followed because the collector limit was reached.
+    refused: tuple[str, ...] = ()
 
 
 class Backend(QObject):
@@ -70,6 +75,8 @@ class Backend(QObject):
         discovery_interval: float = 30.0,
         limits: PipelineLimits | None = None,
         normalizer: Callable[[LogSource, RawRecord], LogEntry] | None = None,
+        redactor: Redactor | None = None,
+        max_sources: int = 64,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -80,6 +87,8 @@ class Backend(QObject):
         self._interval = discovery_interval
         self._limits = limits or PipelineLimits()
         self._normalizer = normalizer
+        self._redactor = redactor
+        self._max_sources = max_sources
         self._entries: deque[LogEntry] = deque()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pipeline: IngestPipeline | None = None
@@ -158,6 +167,8 @@ class Backend(QObject):
                 limits=self._limits,
                 retention=self._retention,
                 normalizer=self._normalizer,
+                redactor=self._redactor,
+                max_sources=self._max_sources,
             )
             async with pipeline:
                 pipeline.subscribe(self._entries.extend)
@@ -203,6 +214,8 @@ class Backend(QObject):
                     stored=pipeline.stats.stored,
                     queued=pipeline.stats.max_queue,
                     collector_errors=dict(pipeline.stats.collector_errors),
+                    budget_trimmed=pipeline.stats.budget_trimmed,
+                    refused=tuple(pipeline.stats.refused),
                 )
             )
             last_received, last_time = received, now
