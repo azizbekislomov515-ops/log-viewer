@@ -180,7 +180,10 @@ def test_starts_unprivileged_and_shows_exact_fixes(
             window.issues_panel.list.item(i).text() for i in range(window.issues_panel.list.count())
         )
         assert "sudo usermod -aG systemd-journal $USER" in text
-        assert "Cannot connect to the Docker daemon" in text
+        # No daemon at DOCKER_HOST, or no Docker at all (CI containers): either way, said.
+        assert "Cannot connect to the Docker daemon" in text or (
+            "Docker does not appear to be installed" in text
+        )
         assert "setfacl -m u:$USER:r" in text
         assert window.isVisible()
     finally:

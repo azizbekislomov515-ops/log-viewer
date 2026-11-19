@@ -41,5 +41,7 @@ def _with_tz(name: str) -> Iterator[None]:
 
 @pytest.fixture
 def tashkent_tz() -> Iterator[None]:
-    """A fixed +05:00 zone without DST, to prove naive -> local -> UTC conversion."""
-    yield from _with_tz("Asia/Tashkent")
+    """A fixed +05:00 zone without DST, to prove naive -> local -> UTC conversion.
+
+    A POSIX TZ string (sign inverted: "-5" is UTC+5), so it works without tzdata."""
+    yield from _with_tz("TST-5")
