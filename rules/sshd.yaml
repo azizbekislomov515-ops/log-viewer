@@ -1,0 +1,389 @@
+# OpenSSH server (auth.log / secure / the ssh unit).
+#
+# The sshd parser sets `event` (accepted, failed, invalid_user, ...) and src_ip, src_port,
+# user, auth_method, invalid_user (true), preauth (true), reason.
+pack: sshd
+version: 1
+description: SSH logins, failed logins, scanners and sshd service state.
+example_source: file:/var/log/auth.log
+applies_to:
+  parsers: [sshd]
+  programs: [sshd, sshd-session]
+  units: [ssh.service, sshd.service, "ssh@*.service", "sshd@*.service"]
+
+rules:
+  # ---------------------------------------------------------------- successful logins
+  - id: sshd.login.root
+    title: "root logged in from {{ src_ip }}"
+    match:
+      fields: {event: accepted, user: root}
+    extract: [src_ip, auth_method]
+    template: Someone logged in over SSH directly as root from {{ src_ip }} (using {{ auth_method }}).
+    action: >-
+      Make sure this was expected. Direct root logins are safer disabled ("PermitRootLogin no" or
+      "prohibit-password" in /etc/ssh/sshd_config); use a normal account plus sudo.
+    category: security
+    severity_override: warning
+    examples:
+      - line: "Nov 17 22:58:00 kali sshd[1800]: Accepted password for root from 203.0.113.50 port 50022 ssh2"
+        expect:
+          text: Someone logged in over SSH directly as root from 203.0.113.50 (using password).
+    counter_examples:
+      - "Nov 17 22:54:00 kali sshd[1500]: Accepted password for deploy from 10.0.0.50 port 52000 ssh2"
+
+  - id: sshd.login.password
+    title: "{{ user }} logged in with a password"
+    match:
+      fields: {event: accepted, auth_method: [password, keyboard-interactive/pam]}
+    extract: [user, src_ip]
+    template: "{{ user }} logged in over SSH from {{ src_ip }} with a password."
+    action: If {{ src_ip }} is unfamiliar, check who used the {{ user }} account; consider SSH keys instead of passwords.
+    category: security
+    severity_override: notice
+    examples:
+      - line: "Nov 17 22:54:00 kali sshd[1500]: Accepted password for deploy from 10.0.0.50 port 52000 ssh2"
+        expect:
+          text: deploy logged in over SSH from 10.0.0.50 with a password.
+    counter_examples:
+      - "Nov 17 22:51:00 kali sshd[1400]: Accepted publickey for azik from 192.168.1.10 port 40000 ssh2: ED25519 SHA256:Zx3r9Kq2mW8vN1bT4yH6uJ0pL5sD7fG9hA2cE4iO6k"
+
+  - id: sshd.login.key
+    title: "{{ user }} logged in with an SSH key"
+    match:
+      fields: {event: accepted}
+    extract: [user, src_ip, auth_method]
+    template: "{{ user }} logged in over SSH from {{ src_ip }} using {{ auth_method }} authentication."
+    category: security
+    severity_override: info
+    examples:
+      - line: "Nov 17 22:51:00 kali sshd[1400]: Accepted publickey for azik from 192.168.1.10 port 40000 ssh2: ED25519 SHA256:Zx3r9Kq2mW8vN1bT4yH6uJ0pL5sD7fG9hA2cE4iO6k"
+        expect:
+          title: azik logged in with an SSH key
+          text: azik logged in over SSH from 192.168.1.10 using publickey authentication.
+      - line: "2026-11-17T22:56:00.123456+05:00 kali sshd-session[1700]: Accepted publickey for azik from 192.168.1.10 port 40100 ssh2: ED25519 SHA256:Zx3r9Kq2"
+        expect:
+          text: azik logged in over SSH from 192.168.1.10 using publickey authentication.
+    counter_examples:
+      - "Nov 17 22:50:20 kali sshd[1310]: Failed password for root from 203.0.113.9 port 51300 ssh2"
+
+  # ---------------------------------------------------------------- failed logins
+  - id: sshd.auth.failed_invalid_user
+    title: "Login attempt for unknown user {{ user }}"
+    match:
+      fields: {event: failed, invalid_user: true}
+    extract: [src_ip]
+    optional: [user]
+    template: >-
+      {{ src_ip }} tried to log in as "{{ user }}", a user that does not exist on this machine,
+      and failed.
+    cause: Almost always an automated scanner guessing common user names.
+    action: If {{ src_ip }} keeps trying, block it (fail2ban or a firewall rule) and allow SSH only with keys.
+    category: security
+    severity_override: warning
+    examples:
+      - line: "Nov 17 22:50:09 kali sshd[1301]: Failed password for invalid user admin from 203.0.113.9 port 51234 ssh2"
+        expect:
+          text: >-
+            203.0.113.9 tried to log in as "admin", a user that does not exist on this machine, and
+            failed.
+    counter_examples:
+      - "Nov 17 22:50:20 kali sshd[1310]: Failed password for root from 203.0.113.9 port 51300 ssh2"
+
+  - id: sshd.auth.failed_root
+    title: "Failed root login from {{ src_ip }}"
+    match:
+      fields: {event: failed, user: root}
+    extract: [src_ip, auth_method]
+    template: "{{ src_ip }} tried to log in as root with a wrong {{ auth_method }}."
+    cause: Usually password guessing by a bot; root is the most attacked account.
+    action: Disable root logins ("PermitRootLogin no") and block {{ src_ip }} if it repeats.
+    category: security
+    severity_override: warning
+    examples:
+      - line: "Nov 17 22:50:20 kali sshd[1310]: Failed password for root from 203.0.113.9 port 51300 ssh2"
+        expect:
+          text: 203.0.113.9 tried to log in as root with a wrong password.
+    counter_examples:
+      - "Nov 17 22:50:09 kali sshd[1301]: Failed password for invalid user admin from 203.0.113.9 port 51234 ssh2"
+
+  - id: sshd.auth.failed_publickey
+    title: "SSH key rejected for {{ user }}"
+    match:
+      fields: {event: failed, auth_method: publickey}
+    extract: [user, src_ip]
+    template: An SSH key offered by {{ src_ip }} for the user {{ user }} was not accepted.
+    cause: Often harmless (a client tries several keys before the right one); repeated failures mean the key is not in ~{{ user }}/.ssh/authorized_keys.
+    category: security
+    severity_override: notice
+    confidence: 0.7
+    examples:
+      - line: "Nov 17 22:54:35 kali sshd[1514]: Failed publickey for git from 2001:db8::77 port 60000 ssh2: RSA SHA256:abc"
+        expect:
+          text: An SSH key offered by 2001:db8::77 for the user git was not accepted.
+    counter_examples:
+      - "Nov 17 22:50:20 kali sshd[1310]: Failed password for root from 203.0.113.9 port 51300 ssh2"
+
+  - id: sshd.auth.failed
+    title: "Failed login for {{ user }} from {{ src_ip }}"
+    match:
+      fields: {event: failed}
+    extract: [user, src_ip, auth_method]
+    template: "{{ src_ip }} failed to log in as {{ user }} ({{ auth_method }} was wrong)."
+    action: A single failure is usually a typo. Many failures from {{ src_ip }} mean someone is guessing the password.
+    category: security
+    severity_override: warning
+    examples:
+      - line: "Nov 17 22:59:00 kali sshd[1900]: Failed password for deploy from 10.0.0.50 port 52100 ssh2"
+        expect:
+          text: 10.0.0.50 failed to log in as deploy (password was wrong).
+    counter_examples:
+      - "Nov 17 22:54:00 kali sshd[1500]: Accepted password for deploy from 10.0.0.50 port 52000 ssh2"
+
+  - id: sshd.auth.invalid_user
+    title: "Unknown user {{ user }} from {{ src_ip }}"
+    match:
+      fields: {event: invalid_user}
+    extract: [src_ip]
+    optional: [user]
+    template: '{{ src_ip }} asked to log in as "{{ user }}", which is not a user on this machine.'
+    cause: Typically a bot trying common names (admin, test, oracle, ubuntu).
+    category: security
+    severity_override: warning
+    examples:
+      - line: "Nov 17 22:50:05 kali sshd[1301]: Invalid user admin from 203.0.113.9 port 51234"
+        expect:
+          text: 203.0.113.9 asked to log in as "admin", which is not a user on this machine.
+    counter_examples:
+      - "Nov 17 22:50:09 kali sshd[1301]: Failed password for invalid user admin from 203.0.113.9 port 51234 ssh2"
+
+  - id: sshd.auth.max_attempts
+    title: "Too many wrong passwords from {{ src_ip }}"
+    match:
+      fields: {event: max_auth_exceeded}
+    extract: [user, src_ip]
+    template: sshd cut off {{ src_ip }} after too many failed attempts to log in as {{ user }} on one connection.
+    cause: Password guessing (brute force), or a client offering many keys from its agent.
+    action: Block {{ src_ip }} if it is not yours (fail2ban does this automatically).
+    category: security
+    severity_override: warning
+    examples:
+      - line: "Nov 17 22:50:22 kali sshd[1310]: error: maximum authentication attempts exceeded for root from 203.0.113.9 port 51300 ssh2 [preauth]"
+        expect:
+          text: sshd cut off 203.0.113.9 after too many failed attempts to log in as root on one connection.
+    counter_examples:
+      - "Nov 17 22:50:20 kali sshd[1310]: Failed password for root from 203.0.113.9 port 51300 ssh2"
+
+  - id: sshd.auth.pam_failure
+    title: "Password check failed{% if src_ip %} from {{ src_ip }}{% endif %}"
+    match:
+      fields: {event: auth_failure}
+    optional: [src_ip, user]
+    template: >-
+      The system rejected a password{% if user %} for {{ user }}{% endif %}{% if src_ip %} from
+      {{ src_ip }}{% endif %}. This is the same failed attempt as the "Failed password" line next to it.
+    category: security
+    severity_override: notice
+    examples:
+      - line: "Nov 17 22:50:07 kali sshd[1301]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=203.0.113.9"
+        expect:
+          text: >-
+            The system rejected a password from 203.0.113.9. This is the same failed attempt as the
+            "Failed password" line next to it.
+      - line: "Nov 17 22:50:22 kali sshd[1310]: PAM 5 more authentication failures; logname= uid=0 euid=0 tty=ssh ruser= rhost=203.0.113.9  user=root"
+        expect:
+          text: >-
+            The system rejected a password for root from 203.0.113.9. This is the same failed attempt
+            as the "Failed password" line next to it.
+    counter_examples:
+      - "Nov 17 22:50:07 kali sshd[1301]: pam_unix(sshd:auth): check pass; user unknown"
+
+  - id: sshd.auth.too_many_failures
+    title: "Disconnected {{ src_ip }}: too many failures"
+    match:
+      fields: {event: disconnecting}
+      regex: Too many authentication failures
+    extract: [src_ip]
+    optional: [user]
+    template: sshd closed the connection from {{ src_ip }}{% if user %} (user {{ user }}){% endif %} after too many failed login attempts.
+    category: security
+    severity_override: warning
+    examples:
+      - line: "Nov 17 22:50:22 kali sshd[1310]: Disconnecting authenticating user root 203.0.113.9 port 51300: Too many authentication failures [preauth]"
+        expect:
+          text: sshd closed the connection from 203.0.113.9 (user root) after too many failed login attempts.
+    counter_examples:
+      - "Nov 17 22:54:34 kali sshd[1513]: Disconnected from authenticating user root 198.51.100.10 port 41003 [preauth]"
+
+  # ---------------------------------------------------------------- scanners and probes
+  - id: sshd.probe.no_ident
+    title: "Port probe from {{ src_ip }}"
+    match:
+      fields: {event: no_ident}
+    extract: [src_ip]
+    template: "{{ src_ip }} connected to the SSH port and left without saying anything: a port scan or a health check."
+    category: security
+    severity_override: info
+    confidence: 0.8
+    examples:
+      - line: "Nov 17 22:54:32 kali sshd[1512]: Did not receive identification string from 198.51.100.9 port 41002"
+        expect:
+          text: >-
+            198.51.100.9 connected to the SSH port and left without saying anything: a port scan or a
+            health check.
+    counter_examples:
+      - "Nov 17 22:54:31 kali sshd[1511]: banner exchange: Connection from 198.51.100.8 port 41001: invalid format"
+
+  - id: sshd.probe.bad_banner
+    title: "Non-SSH client from {{ src_ip }}"
+    match:
+      fields: {event: bad_banner}
+    extract: [src_ip]
+    template: "{{ src_ip }} connected to the SSH port but did not speak SSH ({{ reason }})."
+    optional: [reason]
+    cause: A scanner, a web browser or another program pointed at the wrong port.
+    category: security
+    severity_override: info
+    examples:
+      - line: "Nov 17 22:54:31 kali sshd[1511]: banner exchange: Connection from 198.51.100.8 port 41001: invalid format"
+        expect:
+          text: 198.51.100.8 connected to the SSH port but did not speak SSH (invalid format).
+    counter_examples:
+      - "Nov 17 22:54:32 kali sshd[1512]: Did not receive identification string from 198.51.100.9 port 41002"
+
+  - id: sshd.probe.auth_timeout
+    title: "Login timed out from {{ src_ip }}"
+    match:
+      fields: {event: auth_timeout}
+    extract: [src_ip]
+    template: "{{ src_ip }} connected but did not finish logging in within the time limit (LoginGraceTime), so sshd dropped it."
+    category: security
+    severity_override: info
+    examples:
+      - line: "Nov 17 22:54:36 kali sshd[1515]: Timeout before authentication for connection from 198.51.100.11 to 10.0.0.2, pid = 1515"
+        expect:
+          text: >-
+            198.51.100.11 connected but did not finish logging in within the time limit
+            (LoginGraceTime), so sshd dropped it.
+    counter_examples:
+      - "Nov 17 22:54:32 kali sshd[1512]: Did not receive identification string from 198.51.100.9 port 41002"
+
+  - id: sshd.probe.preauth_closed
+    title: "{{ src_ip }} left before logging in"
+    match:
+      fields: {event: [connection_closed, connection_reset, disconnected, disconnect_received], preauth: true}
+    extract: [src_ip]
+    optional: [user]
+    template: "{{ src_ip }} closed the SSH connection{% if user %} for user {{ user }}{% endif %} before logging in."
+    cause: Typical of scanners and password-guessing bots that give up or move on; also a person cancelling a login.
+    category: security
+    severity_override: info
+    confidence: 0.8
+    examples:
+      - line: "Nov 17 22:50:11 kali sshd[1301]: Connection closed by invalid user admin 203.0.113.9 port 51234 [preauth]"
+        expect:
+          text: 203.0.113.9 closed the SSH connection for user admin before logging in.
+      - line: "Nov 17 22:54:30 kali sshd[1510]: Connection reset by 198.51.100.7 port 41000 [preauth]"
+        expect:
+          text: 198.51.100.7 closed the SSH connection before logging in.
+    counter_examples:
+      - "Nov 17 22:53:10 kali sshd[1400]: Disconnected from user azik 192.168.1.10 port 40000"
+
+  # ---------------------------------------------------------------- sessions
+  - id: sshd.session.opened
+    title: "Session started for {{ user }}"
+    match:
+      fields: {event: session_opened}
+    extract: [user]
+    template: An SSH session for {{ user }} started (the login above succeeded and a shell or command is running).
+    category: info
+    severity_override: info
+    examples:
+      - line: "Nov 17 22:51:00 kali sshd[1400]: pam_unix(sshd:session): session opened for user azik(uid=1000) by (uid=0)"
+        expect:
+          text: >-
+            An SSH session for azik started (the login above succeeded and a shell or command is
+            running).
+    counter_examples:
+      - "Nov 17 22:53:10 kali sshd[1400]: pam_unix(sshd:session): session closed for user azik"
+
+  - id: sshd.session.closed
+    title: "Session ended for {{ user }}"
+    match:
+      fields: {event: session_closed}
+    extract: [user]
+    template: The SSH session of {{ user }} ended.
+    category: info
+    severity_override: info
+    examples:
+      - line: "Nov 17 22:53:10 kali sshd[1400]: pam_unix(sshd:session): session closed for user azik"
+        expect:
+          text: The SSH session of azik ended.
+    counter_examples:
+      - "Nov 17 22:51:00 kali sshd[1400]: pam_unix(sshd:session): session opened for user azik(uid=1000) by (uid=0)"
+
+  - id: sshd.session.disconnected
+    title: "{{ user or src_ip }} disconnected"
+    match:
+      fields: {event: [disconnected, disconnect_received]}
+    extract: [src_ip]
+    optional: [user]
+    template: "{% if user %}{{ user }} ({{ src_ip }}){% else %}{{ src_ip }}{% endif %} disconnected from SSH."
+    category: info
+    severity_override: info
+    examples:
+      - line: "Nov 17 22:53:10 kali sshd[1400]: Disconnected from user azik 192.168.1.10 port 40000"
+        expect:
+          text: azik (192.168.1.10) disconnected from SSH.
+      - line: "Nov 17 22:53:10 kali sshd[1400]: Received disconnect from 192.168.1.10 port 40000:11: disconnected by user"
+        expect:
+          text: 192.168.1.10 disconnected from SSH.
+    counter_examples:
+      - "Nov 17 22:54:34 kali sshd[1513]: Disconnected from authenticating user root 198.51.100.10 port 41003 [preauth]"
+
+  # ---------------------------------------------------------------- daemon
+  - id: sshd.daemon.listening
+    title: "sshd listening on {{ src_ip }}:{{ src_port }}"
+    match:
+      fields: {event: listening}
+    extract: [src_ip, src_port]
+    template: The SSH server started and accepts connections on {{ src_ip }} port {{ src_port }}.
+    category: availability
+    severity_override: info
+    examples:
+      - line: "Nov 17 22:50:01 kali sshd[1234]: Server listening on 0.0.0.0 port 22."
+        expect:
+          text: The SSH server started and accepts connections on 0.0.0.0 port 22.
+    counter_examples:
+      - "Nov 17 23:30:00 kali sshd[1234]: Received signal 15; terminating."
+
+  - id: sshd.daemon.stopping
+    title: sshd stopping
+    match:
+      fields: {event: stopping}
+    extract: [signal]
+    template: The SSH server is shutting down (signal {{ signal }}); existing sessions keep running, but new logins are refused until it starts again.
+    category: availability
+    severity_override: notice
+    examples:
+      - line: "Nov 17 23:30:00 kali sshd[1234]: Received signal 15; terminating."
+        expect:
+          text: >-
+            The SSH server is shutting down (signal 15); existing sessions keep running, but new
+            logins are refused until it starts again.
+    counter_examples:
+      - "Nov 17 22:50:01 kali sshd[1234]: Server listening on 0.0.0.0 port 22."
+
+  - id: sshd.daemon.config_error
+    title: sshd configuration error
+    match:
+      regex: '(?<!\S)(?P<file>/\S+) line (?P<line>\d+): (?P<problem>.+)'
+    template: "sshd found a problem in {{ file }} at line {{ line }}: {{ problem }}."
+    action: Fix line {{ line }}, then check the whole file with "sudo sshd -t" before restarting ssh.
+    category: configuration
+    severity_override: error
+    examples:
+      - line: "Nov 17 23:31:00 kali sshd[2001]: /etc/ssh/sshd_config line 42: Bad configuration option: PermitRootLgin"
+        expect:
+          text: "sshd found a problem in /etc/ssh/sshd_config at line 42: Bad configuration option: PermitRootLgin."
+    counter_examples:
+      - "Nov 17 22:50:01 kali sshd[1234]: Server listening on 0.0.0.0 port 22."
