@@ -150,3 +150,99 @@ of 256 entries 1.2 ms.
 `*.scope` / `user@*` filters) appear in the tree, in all four categories, with both Compose
 projects grouped (5 and 3 services). Opening NetworkManager, journald and a stopped
 Compose container loaded 499, 6 and 112 entries and kept following them.
+
+# Phase 6: explaining what is happening
+
+Walkthrough with the demo stack: [DEMO.md](DEMO.md).
+
+* **Explain panel** (right dock, Ctrl+E): for the selected entry, the title, plain-language
+  text, severity and category chips, confidence, probable cause, what to do, references, the
+  extracted values and parsed fields as a table, and the raw line (copyable). If no rule
+  matched, it says so (LogLens never guesses) and offers **Create rule from this line**.
+* **Inline explanations** (toolbar *Explain rows*; density in ⋯): *compact* adds the title
+  after the line, *full* adds a muted second line under explained rows. Explanations are
+  computed only for rows being painted (and cached), so a million-row tab costs nothing
+  extra until you scroll.
+* **Service Overview** (double-click a source, Ctrl+O on a tab, or the context menu):
+  * a health header: state word and why, status, restarts and the last one, error rate
+    now vs. usual, last error;
+  * a "What's happening" paragraph from the insight engine;
+  * a timeline of events per bucket stacked by severity, with spike markers. Click a bar
+    to open the logs of that interval;
+  * cards declared by the rule packs. The period can be 15 min, 1 h, 6 h or 24 h.
+* **Compose dashboard** (double-click a Compose project): one tile per service with status,
+  image, restarts, errors in the last hour, last error and dependency hints (from Compose's
+  `depends_on` label and from dependency rules). Tiles open the service's logs or Overview.
+* **Notifications**: freedesktop notifications through `notify-send` for the conditions
+  chosen in Settings:
+  * a critical entry;
+  * a detection (rules tagged `detection`);
+  * a restart loop (rules tagged `restart_loop`, or 3 restarts in 5 minutes).
+
+  Mutes are per source (context menu). Limits are one notification per source and
+  condition per minute and 5 per minute overall, and suppressed ones are counted in the
+  next. Log text is passed after `--`, so it can never be read as a `notify-send` option.
+* **Rule editor**: drafts a rule from the selected line. Numbers and IPs are generalized
+  and IPs captured as `ip`, the rule is scoped to the line's service, and a neighbouring
+  line is suggested as the counter-example. It previews the regex groups and the rendered
+  explanation live, through the real schema validator, compiler and sandbox. Saving
+  rewrites `~/.config/loglens/rules/user.yaml` only after the whole user pack, including
+  the new rule's own examples, passes the checks of `loglens-cli rules test`.
+* **Export and incident report**: ⋯ > *Export…* writes the view, the selection or a time
+  range as .txt, .json (streamed) or .csv (spreadsheet formulas neutralized), on the reader
+  thread. ⋯ > *Copy incident report* (Ctrl+Shift+C) puts Markdown on the clipboard: when,
+  which sources, and each entry with its explanation, cause, next step and raw line.
+
+## Threads
+
+Overview pages, the Compose dashboard and the explanations behind notifications run on a
+second worker thread ("analytics"), so a refresh never delays paging in the log views. Each
+page refreshes at most once per second, and only when new entries arrived for its sources.
+That thread has its own explanation engine and cache, so nothing mutable is shared across
+threads.
+
+A page loads its window from SQLite:
+
+* the newest 20,000 entries feed the cards and the summary (the page says when it is
+  sampled);
+* an exact `GROUP BY` histogram feeds the timeline, however busy the source is.
+
+## Overview cards in rule packs
+
+Cards and thresholds are data in the pack, never per-service GUI code:
+
+```yaml
+overview:
+  applies_to: {services: ["*"]}       # optional: which sources show these cards
+  key_fields: {client_ip: client, domain: domain}   # named in "What's happening"
+  thresholds: {error_rate: 0.10, spike_z: 3, spike_min_errors: 5}
+  cards:
+    - {title: Top clients, kind: top, field: client_ip}
+    - {title: Blocked sites, kind: top, field: domain, when: {tags: [denial]},
+       empty: Nothing was blocked.}
+    - {title: Served from cache, kind: count, when: {tags: [cache_hit]}}
+    - {title: Detections, kind: recent, when: {tags: [detection]},
+       columns: [signature, file, client], limit: 10, warn_at: 1}
+```
+
+* `top` counts the most frequent values of `field`, `count` counts entries, and `recent`
+  lists the newest entries with `columns`.
+* Fields come from the rule's extracted values first, then from the parsed fields.
+* `when` selects entries by rule ids, tags and/or a minimum severity.
+* `warn_at` marks the card as needing attention.
+* A pack's cards appear when its own `applies_to` selects the source, when one of its
+  rules explained an entry, or when `overview.applies_to` matches. Docker uses the last
+  case to add lifecycle cards to every container.
+* `rules lint` validates the block (with file and line) and reports cards that name
+  unknown rules.
+
+## Docker lifecycle events
+
+Each container's stream now also carries its lifecycle events from the Docker events API
+(`create`, `start`, `die` with the exit code, `kill`, `oom`, `stop`, `health_status`),
+written in `docker events` text form. That is what lets the Docker rules explain exit
+codes, OOM kills and restarts, and what feeds the restart-history and exit-code cards.
+
+* Events carry no cursor, so the source's resume point stays the log position.
+* On first follow, the last hour of events is read.
+* Duplicates after reconnects are dropped by nanosecond timestamp.
