@@ -12,6 +12,7 @@ from loglens.core.models import SourceStatus
 from loglens.gui.dashboard.base import SEVERITY_WORDS, DashPage, table
 from loglens.gui.dashboard.model import Dashboard
 from loglens.gui.dashboard.widgets import Card, DayBars, Donut, Kpi, RateChart
+from loglens.gui.log_model import plain_tooltip
 from loglens.security.redact import Redactor
 from loglens.security.text import printable
 
@@ -134,7 +135,7 @@ class OverviewPage(DashPage):
             )
             for column, text in enumerate(cells):
                 item = QTableWidgetItem(text)
-                item.setToolTip(text if column == 0 else "")
+                item.setToolTip(plain_tooltip(text) if column == 0 else "")
                 if column == 3:
                     item.setForeground(self.colors.severity(m.severity))
                 if column == 2:

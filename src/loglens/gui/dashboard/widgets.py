@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from loglens.gui import theme as themes
+from loglens.gui.log_model import plain_tooltip
 
 
 def label(text: str = "", *, role: str | None = None, name: str | None = None) -> QLabel:
@@ -257,7 +258,9 @@ class Donut(_Chart):
     def set_parts(self, parts: Sequence[tuple[str, int, str]]) -> None:
         """(label, value, color hex)."""
         self.parts = [part for part in parts if part[1] > 0]
-        self.setToolTip(", ".join(f"{name}: {value:,}" for name, value, _ in self.parts))
+        self.setToolTip(
+            plain_tooltip(", ".join(f"{name}: {value:,}" for name, value, _ in self.parts))
+        )
         self.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:

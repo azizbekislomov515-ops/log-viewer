@@ -21,6 +21,7 @@ from loglens.gui.dashboard.base import DashPage, table
 from loglens.gui.dashboard.model import Dashboard
 from loglens.gui.dashboard.widgets import Card, ShareRows
 from loglens.gui.insight_widgets import TimelineChart
+from loglens.gui.log_model import plain_tooltip
 from loglens.gui.theme import SEVERITY_GLYPH
 
 if TYPE_CHECKING:
@@ -119,7 +120,7 @@ class TimelinePage(DashPage):
             glyph = SEVERITY_GLYPH.get(severity) or "·"
             what = QTableWidgetItem(f"{glyph}  {text}")
             what.setForeground(self.colors.severity(severity))
-            what.setToolTip(text)
+            what.setToolTip(plain_tooltip(text))
             service = QTableWidgetItem(names.get(source_id, source_id) if source_id else "all")
             stamp = QTableWidgetItem(when.astimezone().strftime("%H:%M"))
             stamp.setForeground(QColor(self.colors.dim))

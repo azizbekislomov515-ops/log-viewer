@@ -171,6 +171,25 @@ def test_overview_summary_is_redacted(env: Any) -> None:
     assert "hunter2" not in text and "Login with password=" in text
 
 
+def test_log_derived_tooltips_are_plain_text(env: Any) -> None:
+    window, _ = env
+    hostile = Moment("<img src=x> <b>owned</b>", "systemd:ssh.service", NOW, Severity.ERROR, 2)
+    window.dashboard.dashboard = Dashboard(
+        NOW, 1.0, 0, 1, 0, (), (), {"<i>kind</i>": 1}, (), (hostile,), (), "24h"
+    )
+    overview, timeline = window.page_widgets["overview"], window.page_widgets["timeline"]
+    overview.refresh()
+    timeline.refresh()
+    tips = [
+        overview.latest.item(0, 0).toolTip(),
+        timeline.moments.item(0, 0).toolTip(),
+        overview.donut.toolTip(),
+    ]
+    for tip in tips:
+        assert "<img" not in tip and "<b>" not in tip and "<i>" not in tip
+    assert "&lt;img src=x&gt;" in tips[0]
+
+
 def test_header_search_opens_followed_sources_with_the_search(env: Any) -> None:
     window, _ = env
     window.open_source("systemd:ssh.service")
