@@ -218,6 +218,8 @@ def test_values_that_start_with_a_key_word_are_redacted_whole(
         ("uatp 1234 5678 9012 346", None),  # placeholder replaced below
         ("card 4000000000000002 ok", "4000000000000002"),
         ("card 2221000000000009 ok", "2221000000000009"),
+        ("mir 2200000000000004 ok", "2200000000000004"),
+        ("mir 2204123456789015 ok", "2204123456789015"),
     ],
 )
 def test_narrow_exclusions_do_not_hide_real_secrets(line: str, secret: str | None) -> None:

@@ -55,9 +55,10 @@ _DIGITS13 = re.compile(r"\d(?:[ -]?\d){12}")
 _RUN32 = re.compile(r"[A-Za-z0-9+/_=-]{32}")
 
 
-#: Epoch seconds 2000-01-01 .. 2040-01-01: a ms/us/ns timestamp in this range is a
-#: timestamp, not a card (they pass Luhn one time in ten).
-_EPOCH_RANGE = range(946_684_800, 2_208_988_800)
+#: Epoch seconds starting with 1 (2001-09-09 .. 2033-05-18): a ms/us/ns timestamp in this
+#: range is a timestamp, not a card (they pass Luhn one time in ten). No 13/16/19-digit
+#: card starts with 1 (UATP, the only issuer on 1, uses 15 digits); Mir starts at 2200.
+_EPOCH_RANGE = range(1_000_000_000, 2_000_000_000)
 
 
 def _looks_like_epoch(digits: str) -> bool:
