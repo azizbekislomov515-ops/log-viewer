@@ -38,3 +38,13 @@ Phase 8 Optional opt-in AI explainer
 Phase 9 Packaging, docs, CI, release
 
 Ask me clarifying questions only if something blocks Phase 0. Otherwise proceed.s
+
+## Security invariants (Phase 7; see docs/THREAT_MODEL.md)
+- Log content, container labels and non-built-in rule packs are hostile input.
+- Every entry passes `security.redact.Redactor` before storage; exports, reports and any AI feature redact again and never call `SecretVault.reveal`.
+- Text shown in a terminal, export or report goes through `security.text.printable`; Qt labels showing log text are PlainText.
+- User-supplied regexes use the `regex` module with a timeout; built-in rule regexes must stay linear (CI checks crafted long lines).
+- Rule templates: only the whitelisted Jinja nodes/filters in `explain/rules.py`; `action` values end in `| shquote`.
+- Collector-owned fields (`stream`, `parser`, `truncated`, `lines`, `timestamp_source`, `redacted`) can never come from log text.
+- Never run the GUI as root; reach privileged logs via groups/ACLs or `loglens-helper` (read-only, allowlisted).
+- Before committing: `uv run pytest`, `uv run ruff check src tests`, `uv run mypy`, `uv run bandit -c pyproject.toml -r src`.

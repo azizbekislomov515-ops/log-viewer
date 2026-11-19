@@ -1,0 +1,25 @@
+Package: loglens
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: @MAINTAINER@
+Installed-Size: @SIZE@
+Section: admin
+Priority: optional
+Depends: libc6 (>= 2.31), libgl1, libegl1, libfontconfig1, libfreetype6, libdbus-1-3,
+ libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcb1, libxcb-cursor0,
+ libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0,
+ libxcb-shape0, libxcb-xfixes0, libxcb-xkb1, libxcb-shm0, libxcb-sync1, libxcb-render0,
+ libwayland-client0, libwayland-cursor0, libwayland-egl1, libglib2.0-0t64 | libglib2.0-0
+Recommends: systemd, libnotify-bin, acl, polkitd | policykit-1
+Suggests: docker.io | docker-ce
+Description: see every service's logs and what they mean
+ LogLens discovers the logs on a Linux machine (systemd services, Docker
+ containers and Compose projects, and log files such as Squid, ClamAV and
+ nginx), shows each service's logs live and separately, and explains in plain
+ language what is happening, with probable causes and next steps.
+ .
+ Everything stays on the machine; secrets are removed before logs are stored;
+ it never needs root. The optional loglens-helper service streams selected
+ logs to authorized users without changing their groups.
+ .
+ This package bundles its own Python runtime and Qt under /opt/loglens.

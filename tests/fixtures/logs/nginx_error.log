@@ -1,0 +1,34 @@
+2026/11/17 22:50:01 [notice] 1#1: using the "epoll" event method
+2026/11/17 22:50:01 [notice] 1#1: nginx/1.27.2
+2026/11/17 22:50:01 [notice] 1#1: built by gcc 12.2.0 (Debian 12.2.0-14)
+2026/11/17 22:50:01 [notice] 1#1: OS: Linux 6.11.2-amd64
+2026/11/17 22:50:01 [notice] 1#1: getrlimit(RLIMIT_NOFILE): 1048576:1048576
+2026/11/17 22:50:01 [notice] 1#1: start worker processes
+2026/11/17 22:50:01 [notice] 1#1: start worker process 29
+2026/11/17 22:50:02 [error] 29#29: *1 open() "/usr/share/nginx/html/favicon.ico" failed (2: No such file or directory), client: 10.0.0.5, server: localhost, request: "GET /favicon.ico HTTP/1.1", host: "example.com", referrer: "http://example.com/"
+2026/11/17 22:50:03 [error] 29#29: *3 connect() failed (111: Connection refused) while connecting to upstream, client: 10.0.0.10, server: api.example.com, request: "GET /api/v1/report HTTP/1.1", upstream: "http://127.0.0.1:8080/api/v1/report", host: "api.example.com"
+2026/11/17 22:50:04 [error] 29#29: *4 upstream timed out (110: Connection timed out) while reading response header from upstream, client: 10.0.0.10, server: api.example.com, request: "GET /api/v1/report HTTP/1.1", upstream: "http://127.0.0.1:8080/api/v1/report", host: "api.example.com"
+2026/11/17 22:50:05 [warn] 29#29: *5 an upstream response is buffered to a temporary file /var/cache/nginx/proxy_temp/1/00/0000000001 while reading upstream, client: 10.0.0.19, server: _, request: "GET /download/big.iso HTTP/1.1", upstream: "http://10.0.5.2:80/download/big.iso", host: "files.example.com"
+2026/11/17 22:50:06 [crit] 29#29: *6 SSL_do_handshake() failed (SSL: error:0A00006C:SSL routines::bad key share) while SSL handshaking, client: 198.51.100.23, server: 0.0.0.0:443
+2026/11/17 22:50:07 [emerg] 1#1: bind() to 0.0.0.0:80 failed (98: Address already in use)
+2026/11/17 22:50:07 [emerg] 1#1: still could not bind()
+2026/11/17 22:50:08 [alert] 29#29: *7 768 worker_connections are not enough while connecting to upstream, client: 10.0.0.30, server: _, request: "GET / HTTP/1.1", upstream: "http://10.0.5.3:80/", host: "example.com"
+2026/11/17 22:50:09 [error] 29#29: *8 access forbidden by rule, client: 203.0.113.9, server: example.com, request: "GET /.git/config HTTP/1.1", host: "example.com"
+2026/11/17 22:50:10 [error] 29#29: *9 directory index of "/var/www/html/uploads/" is forbidden, client: 10.0.0.31, server: example.com, request: "GET /uploads/ HTTP/1.1", host: "example.com"
+2026/11/17 22:50:11 [error] 29#29: *10 FastCGI sent in stderr: "PHP message: PHP Fatal error:  Uncaught Error: Call to undefined function foo() in /var/www/html/index.php:3" while reading response header from upstream, client: 10.0.0.32, server: example.com, request: "GET /index.php HTTP/1.1", upstream: "fastcgi://unix:/run/php/php8.2-fpm.sock:", host: "example.com"
+2026/11/17 22:50:12 [info] 29#29: *11 client 10.0.0.33 closed keepalive connection
+2026/11/17 22:50:13 [error] 29#29: *12 limiting requests, excess: 10.520 by zone "api", client: 203.0.113.50, server: api.example.com, request: "POST /api/v1/login HTTP/1.1", host: "api.example.com"
+2026/11/17 22:50:14 [warn] 29#29: *13 a client request body is buffered to a temporary file /var/cache/nginx/client_temp/0000000002, client: 10.0.0.34, server: upload.example.com, request: "POST /upload HTTP/1.1", host: "upload.example.com"
+2026/11/17 22:50:15 [error] 29#29: *14 client intended to send too large body: 104857601 bytes, client: 10.0.0.35, server: upload.example.com, request: "POST /upload HTTP/1.1", host: "upload.example.com"
+2026/11/17 22:50:16 [notice] 1#1: signal 1 (SIGHUP) received from 4321, reconfiguring
+2026/11/17 22:50:16 [notice] 1#1: reconfiguring
+2026/11/17 22:50:16 [notice] 1#1: signal 3 (SIGQUIT) received from 1, shutting down
+2026/11/17 22:50:16 [notice] 29#29: gracefully shutting down
+2026/11/17 22:50:16 [notice] 29#29: exiting
+2026/11/17 22:50:16 [notice] 1#1: signal 17 (SIGCHLD) received from 29
+2026/11/17 22:50:16 [notice] 1#1: worker process 29 exited with code 0
+2026/11/17 22:50:17 [debug] 30#30: *15 http cleanup add: 000055D4C1F2A3B0
+2026/11/17 22:50:18 [error] 30#30: *16 no live upstreams while connecting to upstream, client: 10.0.0.36, server: _, request: "GET / HTTP/1.1", upstream: "http://backend/", host: "example.com"
+2026/11/17 22:50:19 [error] abc#30: bad pid
+2026/11/17 22:50:19 error 30#30: no brackets
+nginx: [emerg] unknown directive "servr" in /etc/nginx/sites-enabled/default:3

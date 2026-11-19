@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=LogLens
+GenericName=Log Viewer
+Comment=See every service's logs and what they mean
+Exec=loglens
+TryExec=loglens
+Icon=org.loglens.LogLens
+Terminal=false
+Categories=System;Monitor;
+Keywords=log;logs;journal;journald;systemd;docker;compose;syslog;squid;nginx;clamav;
+StartupNotify=true
+StartupWMClass=loglens
+SingleMainWindow=true

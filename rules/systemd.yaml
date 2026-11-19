@@ -1,0 +1,418 @@
+# systemd (PID 1) messages about units: failures, restarts, timeouts, dependencies, bad unit
+# files. Selected by program, so an application that happens to print "Started ..." is not
+# matched: journald gives SYSLOG_IDENTIFIER=systemd, syslog files give program "systemd".
+pack: systemd
+version: 1
+description: systemd service manager messages about units.
+example_source: file:/var/log/syslog
+applies_to:
+  programs: [systemd, init]
+
+overview:
+  cards:
+    - {title: Failures, kind: recent, when: {tags: [failure]}, columns: [unit], limit: 8, warn_at: 1,
+       empty: No unit failed.}
+    - {title: Restarts by unit, kind: top, field: unit, when: {tags: [restart]}}
+
+rules:
+  # ---------------------------------------------------------------- failure results
+  - id: systemd.unit.start_limit_hit
+    title: "{{ unit }} gave up restarting"
+    match:
+      regex: "^(?P<unit>\\S+): (?:Start request repeated too quickly|Failed with result 'start-limit-hit')"
+    template: systemd stopped trying to start {{ unit }} because it failed too many times in a short period.
+    cause: The service crashes right after starting (look at the error just before the first restart).
+    action: Fix the cause, then run "systemctl reset-failed {{ unit | shquote }}" and "systemctl start {{ unit | shquote }}".
+    category: availability
+    tags: [restart_loop, failure]
+    severity_override: critical
+    references: ["man:systemd.unit(5)"]
+    examples:
+      - line: "Nov 18 10:00:05 kali systemd[1]: nginx.service: Start request repeated too quickly."
+        expect:
+          text: >-
+            systemd stopped trying to start nginx.service because it failed too many times in a
+            short period.
+      - line: "Nov 18 10:00:05 kali systemd[1]: nginx.service: Failed with result 'start-limit-hit'."
+        expect:
+          text: >-
+            systemd stopped trying to start nginx.service because it failed too many times in a
+            short period.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: nginx.service: Failed with result 'exit-code'."
+
+  - id: systemd.unit.failed_exit_code
+    title: "{{ unit }} failed"
+    match:
+      regex: "^(?P<unit>\\S+): Failed with result 'exit-code'"
+    template: The service {{ unit }} stopped with an error code, so systemd marked it as failed.
+    action: Run "journalctl -u {{ unit | shquote }} -n 50" to see what the program printed before it exited.
+    category: availability
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: nginx.service: Failed with result 'exit-code'."
+        expect:
+          title: nginx.service failed
+          text: The service nginx.service stopped with an error code, so systemd marked it as failed.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: nginx.service: Failed with result 'timeout'."
+
+  - id: systemd.unit.failed_timeout
+    title: "{{ unit }} timed out"
+    match:
+      regex: "^(?P<unit>\\S+): (?:Failed with result 'timeout'|(?P<phase>Start|Stop)(?:-pre|-post)? operation timed out)"
+    template: >-
+      {{ unit }} did not finish {% if phase == "Stop" %}stopping{% else %}starting{% endif %} in time,
+      so systemd gave up on it.
+    cause: The program hangs (waiting for the network, a database, a lock) or simply needs longer than TimeoutStartSec.
+    action: Check "journalctl -u {{ unit | shquote }}" for what it was waiting for; raise TimeoutStartSec only if slow start-up is normal.
+    category: availability
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: postgresql.service: Start operation timed out. Terminating."
+        expect:
+          text: postgresql.service did not finish starting in time, so systemd gave up on it.
+      - line: "Nov 18 10:00:00 kali systemd[1]: postgresql.service: Failed with result 'timeout'."
+        expect:
+          text: postgresql.service did not finish starting in time, so systemd gave up on it.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: postgresql.service: State 'stop-sigterm' timed out. Killing."
+
+  - id: systemd.unit.stop_timeout
+    title: "{{ unit }} killed while stopping"
+    match:
+      regex: "^(?P<unit>\\S+): State '(?P<state>stop-[\\w-]+)' timed out\\. Killing"
+    template: "{{ unit }} did not shut down within its stop timeout, so systemd killed it."
+    cause: The program ignores the stop signal or takes long to finish its work; it may lose unsaved data.
+    action: Check why it is slow to stop; raise TimeoutStopSec if a long shutdown is expected.
+    category: availability
+    severity_override: warning
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: postgresql.service: State 'stop-sigterm' timed out. Killing."
+        expect:
+          text: postgresql.service did not shut down within its stop timeout, so systemd killed it.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: postgresql.service: Start operation timed out. Terminating."
+
+  - id: systemd.unit.oom_killed
+    title: "{{ unit }} ran out of memory"
+    match:
+      regex: "^(?P<unit>\\S+): (?:A process of this unit has been killed by the OOM killer|Failed with result 'oom-kill')"
+    template: The kernel killed a process of {{ unit }} because the machine (or the service's memory limit) ran out of memory.
+    action: Check memory use ("systemctl status {{ unit | shquote }}" shows it) and MemoryMax=; add RAM/swap or reduce the service's memory use.
+    category: performance
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: java-app.service: A process of this unit has been killed by the OOM killer."
+        expect:
+          text: >-
+            The kernel killed a process of java-app.service because the machine (or the service's
+            memory limit) ran out of memory.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: java-app.service: Failed with result 'exit-code'."
+
+  - id: systemd.unit.failed_signal
+    title: "{{ unit }} crashed"
+    match:
+      regex: "^(?P<unit>\\S+): Failed with result '(?P<result>signal|core-dump)'"
+    template: >-
+      {{ unit }} was ended by a signal{% if result == "core-dump" %} and crashed (core dump){% endif %},
+      so systemd marked it as failed.
+    action: Run "journalctl -u {{ unit | shquote }}" for the crash details{% if result == "core-dump" %} and "coredumpctl info" for the stack trace{% endif %}.
+    category: availability
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: worker.service: Failed with result 'core-dump'."
+        expect:
+          text: worker.service was ended by a signal and crashed (core dump), so systemd marked it as failed.
+          action: Run "journalctl -u worker.service" for the crash details and "coredumpctl info" for the stack trace.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: worker.service: Failed with result 'exit-code'."
+
+  # ---------------------------------------------------------------- main process exits
+  - id: systemd.process.exec_failed
+    title: "{{ unit }}: program could not be started"
+    match:
+      regex: "^(?P<unit>\\S+): (?:Failed at step EXEC spawning (?P<path>\\S+): (?P<reason>.+)|Main process exited, code=exited, status=203/EXEC)"
+    template: >-
+      systemd could not run the program of {{ unit }}{% if path %} ({{ path }}: {{ reason }}){% endif %},
+      so the service never started.
+    cause: ExecStart= points to a file that does not exist, is not executable, or has a bad interpreter line.
+    action: Check ExecStart= in "systemctl cat {{ unit | shquote }}" and that the file exists and is executable.
+    category: configuration
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: myapp.service: Failed at step EXEC spawning /opt/myapp/bin/run: No such file or directory"
+        expect:
+          text: >-
+            systemd could not run the program of myapp.service (/opt/myapp/bin/run: No such file or
+            directory), so the service never started.
+      - line: "Nov 18 10:00:00 kali systemd[1]: myapp.service: Main process exited, code=exited, status=203/EXEC"
+        expect:
+          text: systemd could not run the program of myapp.service, so the service never started.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: myapp.service: Main process exited, code=exited, status=1/FAILURE"
+
+  - id: systemd.process.exited_error
+    title: "{{ unit }} exited with status {{ status }}"
+    match:
+      regex: "^(?P<unit>\\S+): Main process exited, code=exited, status=(?P<status>[1-9]\\d*)/(?P<name>\\S+)"
+    template: The main program of {{ unit }} stopped with exit status {{ status }} ({{ name }}).
+    action: The program's own messages just before this line say why; see "journalctl -u {{ unit | shquote }} -n 50".
+    category: availability
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: nginx.service: Main process exited, code=exited, status=1/FAILURE"
+        expect:
+          text: The main program of nginx.service stopped with exit status 1 (FAILURE).
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: nginx.service: Main process exited, code=killed, status=9/KILL"
+
+  - id: systemd.process.dumped
+    title: "{{ unit }} crashed ({{ signal }})"
+    match:
+      regex: "^(?P<unit>\\S+): Main process exited, code=dumped, status=\\d+/(?P<signal>\\w+)"
+    template: The main program of {{ unit }} crashed with {{ signal }}{% if signal == "SEGV" %} (a memory access bug){% endif %} and left a core dump.
+    action: Run "coredumpctl info" for the crash's stack trace; updating the package often fixes known crashes.
+    category: availability
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: worker.service: Main process exited, code=dumped, status=11/SEGV"
+        expect:
+          text: >-
+            The main program of worker.service crashed with SEGV (a memory access bug) and left a
+            core dump.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: worker.service: Main process exited, code=killed, status=9/KILL"
+
+  - id: systemd.process.killed
+    title: "{{ unit }} killed by {{ signal }}"
+    match:
+      regex: "^(?P<unit>\\S+): Main process exited, code=killed, status=\\d+/(?P<signal>\\w+)"
+    template: >-
+      The main program of {{ unit }} was ended by the {{ signal }} signal{% if signal == "KILL" %}
+      (often the out-of-memory killer, or a forced stop){% elif signal == "TERM" %} (a normal stop
+      request it did not handle){% endif %}.
+    category: availability
+    severity_override: warning
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: nginx.service: Main process exited, code=killed, status=9/KILL"
+        expect:
+          text: >-
+            The main program of nginx.service was ended by the KILL signal (often the out-of-memory
+            killer, or a forced stop).
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: worker.service: Main process exited, code=dumped, status=11/SEGV"
+
+  - id: systemd.process.watchdog
+    title: "{{ unit }} stopped responding"
+    match:
+      regex: "^(?P<unit>\\S+): Watchdog timeout(?: \\(limit (?P<limit>[^)]+)\\))?"
+    template: "{{ unit }} stopped sending its \"I am alive\" signal{% if limit %} for {{ limit }}{% endif %}, so systemd considers it hung and will restart it."
+    action: Look for what the service was doing just before; it may be deadlocked or overloaded.
+    category: availability
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: systemd-journald.service: Watchdog timeout (limit 3min)!"
+        expect:
+          text: >-
+            systemd-journald.service stopped sending its "I am alive" signal for 3min, so systemd
+            considers it hung and will restart it.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: nginx.service: Failed with result 'exit-code'."
+
+  # ---------------------------------------------------------------- restarts and dependencies
+  - id: systemd.unit.scheduled_restart
+    title: "{{ unit }} restarting (attempt {{ count }})"
+    match:
+      regex: "^(?P<unit>\\S+): Scheduled restart job, restart counter is at (?P<count>\\d+)"
+    template: >-
+      {{ unit }} stopped and systemd is restarting it automatically; this is restart number
+      {{ count }}{% if count | int >= 3 %}, so it is probably crash-looping{% endif %}.
+    action: "{% if count | int >= 3 %}Find why it keeps failing: journalctl -u {{ unit | shquote }} -n 100{% endif %}"
+    category: availability
+    severity_override: warning
+    tags: [restart]
+    examples:
+      - line: "Nov 18 10:00:04 kali systemd[1]: nginx.service: Scheduled restart job, restart counter is at 5."
+        expect:
+          text: >-
+            nginx.service stopped and systemd is restarting it automatically; this is restart number
+            5, so it is probably crash-looping.
+      - line: "Nov 18 10:00:04 kali systemd[1]: nginx.service: Scheduled restart job, restart counter is at 1."
+        expect:
+          text: nginx.service stopped and systemd is restarting it automatically; this is restart number 1.
+    counter_examples:
+      - "Nov 18 10:00:05 kali systemd[1]: nginx.service: Start request repeated too quickly."
+
+  - id: systemd.unit.dependency_failed
+    title: "Not started: {{ what }}"
+    match:
+      regex: ^Dependency failed for (?P<what>.+?)\.?$
+    template: systemd did not start {{ what }} because something it depends on failed first.
+    action: Find the failed dependency with "systemctl list-dependencies" and "systemctl --failed", and fix that one.
+    category: availability
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: Dependency failed for Local File Systems."
+        expect:
+          text: systemd did not start Local File Systems because something it depends on failed first.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: Failed to start nginx.service - A high performance web server and a reverse proxy server."
+
+  - id: systemd.unit.job_dependency
+    title: "{{ unit }} skipped: dependency failed"
+    match:
+      regex: "^(?P<unit>\\S+): Job \\S+/(?P<job>\\w+) failed with result 'dependency'"
+    template: The {{ job }} of {{ unit }} was cancelled because a unit it requires failed.
+    action: Run "systemctl list-dependencies {{ unit | shquote }}" and "systemctl --failed" to find the failed one.
+    category: availability
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: data.mount: Job data.mount/start failed with result 'dependency'."
+        expect:
+          text: The start of data.mount was cancelled because a unit it requires failed.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: Dependency failed for Local File Systems."
+
+  - id: systemd.unit.failed_to_start
+    title: "Failed to start {{ unit or desc }}"
+    match:
+      regex: ^Failed to start (?:(?P<unit>\S+\.(?:service|socket|mount|timer|target|path|swap)) - )?(?P<desc>.+?)\.?$
+    template: systemd could not start {{ unit or desc }}{% if unit %} ({{ desc }}){% endif %}.
+    action: >-
+      {% if unit %}Run "systemctl status {{ unit | shquote }}" and "journalctl -xeu {{ unit | shquote }}" for
+      the reason.{% else %}Run "systemctl --failed" to find the unit, then "journalctl -xeu" with its name.{% endif %}
+    category: availability
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: Failed to start nginx.service - A high performance web server and a reverse proxy server."
+        expect:
+          text: systemd could not start nginx.service (A high performance web server and a reverse proxy server).
+      - line: "Nov 18 10:00:00 kali systemd[1]: Failed to start The nginx HTTP and reverse proxy server."
+        expect:
+          text: systemd could not start The nginx HTTP and reverse proxy server.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: Started nginx.service - A high performance web server and a reverse proxy server."
+
+  - id: systemd.mount.failed
+    title: "Mount failed: {{ what }}"
+    match:
+      regex: ^Failed to mount (?P<what>.+?)\.?$
+    template: systemd could not mount {{ what }}; programs that need it will fail or not start.
+    action: Check the entry in /etc/fstab (device, UUID, options) and run "journalctl -b -u '*.mount'" for the error.
+    category: availability
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: Failed to mount /srv/data."
+        expect:
+          text: systemd could not mount /srv/data; programs that need it will fail or not start.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: Failed to start nginx.service - A high performance web server and a reverse proxy server."
+
+  - id: systemd.device.timeout
+    title: "Disk not found: {{ device }}"
+    match:
+      regex: ^Timed out waiting for device (?P<device>.+?)\.?$
+    template: systemd waited for the device {{ device }} at boot, but it never appeared.
+    cause: The disk is missing or unplugged, or /etc/fstab refers to a UUID/label that changed.
+    action: Compare /etc/fstab with "lsblk -f"; add "nofail" to the fstab entry if the disk is optional.
+    category: availability
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: Timed out waiting for device /dev/disk/by-uuid/4f1e2d3c-1111-2222-3333-444455556666."
+        expect:
+          text: >-
+            systemd waited for the device /dev/disk/by-uuid/4f1e2d3c-1111-2222-3333-444455556666 at
+            boot, but it never appeared.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: Failed to mount /srv/data."
+
+  # ---------------------------------------------------------------- unit files
+  - id: systemd.config.unknown_key
+    title: "Typo in {{ file }} line {{ line }}"
+    match:
+      regex: "^(?P<file>/\\S+):(?P<line>\\d+): Unknown key name '(?P<key>[^']+)' in section '(?P<section>[^']+)', ignoring"
+    template: The unit file {{ file }} has an unknown setting "{{ key }}" in [{{ section }}] at line {{ line }}; systemd ignores it.
+    action: Fix the spelling (see "man systemd.directives"), then run "systemctl daemon-reload".
+    category: configuration
+    severity_override: warning
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: /etc/systemd/system/myapp.service:7: Unknown key name 'ExecStar' in section 'Service', ignoring."
+        expect:
+          text: >-
+            The unit file /etc/systemd/system/myapp.service has an unknown setting "ExecStar" in
+            [Service] at line 7; systemd ignores it.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: myapp.service: Unit configuration has fatal error, unit will not be started."
+
+  - id: systemd.config.fatal
+    title: "{{ unit }} has a broken unit file"
+    match:
+      regex: "^(?P<unit>\\S+): (?:Unit configuration has fatal error|Service has no ExecStart=)"
+    template: systemd refuses to start {{ unit }} because its unit file is invalid.
+    action: Read the systemd lines just above for the exact problem, fix "systemctl edit --full {{ unit | shquote }}", then "systemctl daemon-reload".
+    category: configuration
+    tags: [failure]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali systemd[1]: myapp.service: Unit configuration has fatal error, unit will not be started."
+        expect:
+          text: systemd refuses to start myapp.service because its unit file is invalid.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: /etc/systemd/system/myapp.service:7: Unknown key name 'ExecStar' in section 'Service', ignoring."
+
+  # ---------------------------------------------------------------- normal lifecycle
+  - id: systemd.unit.started
+    title: "Started {{ unit or desc }}"
+    match:
+      regex: ^Started (?:(?P<unit>\S+\.(?:service|socket|mount|timer|target|path|swap|scope)) - )?(?P<desc>.+?)\.?$
+    template: systemd started {{ unit or desc }}{% if unit %} ({{ desc }}){% endif %}.
+    category: availability
+    severity_override: info
+    tags: [restart]
+    examples:
+      - line: "Nov 18 10:00:06 kali systemd[1]: Started nginx.service - A high performance web server and a reverse proxy server."
+        expect:
+          text: systemd started nginx.service (A high performance web server and a reverse proxy server).
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: Failed to start nginx.service - A high performance web server and a reverse proxy server."
+
+  - id: systemd.unit.stopped
+    title: "Stopped {{ unit or desc }}"
+    match:
+      regex: ^Stopped (?:(?P<unit>\S+\.(?:service|socket|mount|timer|target|path|swap|scope)) - )?(?P<desc>.+?)\.?$
+    template: systemd stopped {{ unit or desc }}{% if unit %} ({{ desc }}){% endif %}.
+    category: availability
+    severity_override: info
+    examples:
+      - line: "Nov 18 10:00:06 kali systemd[1]: Stopped nginx.service - A high performance web server and a reverse proxy server."
+        expect:
+          text: systemd stopped nginx.service (A high performance web server and a reverse proxy server).
+    counter_examples:
+      - "Nov 18 10:00:06 kali systemd[1]: Started nginx.service - A high performance web server and a reverse proxy server."
+
+  - id: systemd.unit.deactivated
+    title: "{{ unit }} finished"
+    match:
+      regex: "^(?P<unit>\\S+): Deactivated successfully"
+    template: "{{ unit }} finished or was stopped cleanly."
+    category: info
+    severity_override: info
+    examples:
+      - line: "Nov 18 10:00:06 kali systemd[1]: logrotate.service: Deactivated successfully."
+        expect:
+          text: logrotate.service finished or was stopped cleanly.
+    counter_examples:
+      - "Nov 18 10:00:00 kali systemd[1]: logrotate.service: Failed with result 'exit-code'."

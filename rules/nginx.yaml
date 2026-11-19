@@ -1,0 +1,647 @@
+# Nginx access log (combined) and error log.
+#
+# Access fields: client_ip, status, method, path, protocol, bytes, referer, user_agent,
+# user; `request` holds a request line that is not "METHOD path PROTO" (TLS bytes, junk).
+# Error-log fields: level, client_ip, server, request, upstream, host; message is the text
+# before ", client: ...".
+pack: nginx
+version: 1
+description: Nginx web server requests, upstream (backend) problems and configuration errors.
+example_source: file:/var/log/nginx/access.log
+applies_to:
+  parsers: [nginx]
+  units: [nginx.service, openresty.service]
+  paths: ["/var/log/nginx/*"]
+  images: ["*nginx*", "*openresty*"]
+  services: ["*nginx*"]
+
+overview:
+  key_fields: {client_ip: client, path: page, status: status code}
+  thresholds: {error_rate: 0.05}
+  cards:
+    - {title: Top clients, kind: top, field: client_ip}
+    - {title: Top pages, kind: top, field: path}
+    - {title: Status codes, kind: top, field: status}
+    - {title: Backend problems, kind: recent, when: {tags: [backend]}, limit: 5, warn_at: 1,
+       empty: The backends answered every request.}
+    - {title: Attack probes by IP, kind: top, field: client_ip, when: {tags: [probe, detection]}}
+
+rules:
+  # ---------------------------------------------------------------- access: attacks and junk
+  - id: nginx.access.secret_file_served
+    title: "Sensitive file downloaded: {{ path }}"
+    match:
+      fields: {status: [200, 206]}
+      field: path
+      regex: ^/(?:\.env|\.git/|\.aws/|\.ssh/|wp-config\.php\.bak|\.htpasswd)
+    extract: [client_ip, path]
+    template: "{{ client_ip }} successfully downloaded {{ path }}, a file that usually contains passwords or source code."
+    action: >-
+      Block access to hidden files now (location ~ /\. { deny all; }), and treat every secret in
+      {{ path | shquote }} as leaked: change those passwords and keys.
+    category: security
+    tags: [detection]
+    severity_override: critical
+    examples:
+      - line: '203.0.113.9 - - [17/Nov/2026:22:50:14 +0000] "GET /.env HTTP/1.1" 200 812 "-" "Mozilla/5.0"'
+        expect:
+          text: 203.0.113.9 successfully downloaded /.env, a file that usually contains passwords or source code.
+    counter_examples:
+      - '10.0.0.14 - - [17/Nov/2026:22:50:14 +0000] "GET /.env HTTP/1.1" 403 153 "-" "Mozilla/5.0 (compatible; Nimbostratus-Bot/v1.3.2)"'
+
+  - id: nginx.access.scanner_probe
+    title: "Vulnerability scan from {{ client_ip }}"
+    match:
+      field: path
+      regex: (?i)^/(?:wp-login\.php|xmlrpc\.php|wp-admin|\.env|\.git|phpmyadmin|pma|cgi-bin|HNAP1|boaform|actuator|vendor/phpunit|.*invokefunction|.*\.\./)
+    extract: [client_ip, path, status]
+    template: "{{ client_ip }} probed {{ path }}, a path attackers check for known weaknesses; nginx answered {{ status }}."
+    cause: Automated internet scanners do this to every public web server.
+    action: Nothing to do while the answers are 4xx. If one IP does it a lot, block it or add fail2ban.
+    category: security
+    tags: [probe]
+    severity_override: notice
+    confidence: 0.8
+    examples:
+      - line: '203.0.113.9 - - [17/Nov/2026:22:50:02 +0000] "GET /wp-login.php HTTP/1.1" 404 153 "-" "Mozilla/5.0 zgrab/0.x"'
+        expect:
+          text: >-
+            203.0.113.9 probed /wp-login.php, a path attackers check for known weaknesses; nginx
+            answered 404.
+      - line: '10.0.0.15 - - [17/Nov/2026:22:50:15 +0000] "GET /index.php?s=/Index/\x5Cthink\x5Capp/invokefunction HTTP/1.1" 404 153 "-" "Mozilla/5.0"'
+        expect:
+          text: >-
+            10.0.0.15 probed /index.php?s=/Index/\x5Cthink\x5Capp/invokefunction, a path attackers
+            check for known weaknesses; nginx answered 404.
+    counter_examples:
+      - '10.0.0.5 - - [17/Nov/2026:22:50:01 +0000] "GET /favicon.ico HTTP/1.1" 404 153 "http://example.com/" "Mozilla/5.0"'
+
+  - id: nginx.access.tls_to_http
+    title: "HTTPS sent to an HTTP port by {{ client_ip }}"
+    match:
+      field: request
+      regex: ^\\x16\\x03
+    extract: [client_ip]
+    template: "{{ client_ip }} tried to start an HTTPS (TLS) connection on a port where nginx expects plain HTTP, so the request was rejected (400)."
+    cause: A client using https:// on port 80 (or another non-TLS listen port), or a scanner.
+    action: Ignore if occasional; if your own clients do this, check their URLs or add "ssl" to that listen directive.
+    category: configuration
+    tags: [probe]
+    severity_override: info
+    examples:
+      - line: '198.51.100.23 - - [17/Nov/2026:22:50:03 +0000] "\x16\x03\x01\x02\x00\x01\x00\x01\xFC\x03\x03" 400 157 "-" "-"'
+        expect:
+          text: >-
+            198.51.100.23 tried to start an HTTPS (TLS) connection on a port where nginx expects
+            plain HTTP, so the request was rejected (400).
+    counter_examples:
+      - '198.51.100.23 - - [17/Nov/2026:22:50:03 +0000] "-" 400 0 "-" "-"'
+
+  - id: nginx.access.empty_request
+    title: "Empty connection from {{ client_ip }}"
+    match:
+      fields: {status: 400}
+      field: raw
+      regex: '\] "-" 400 '
+    extract: [client_ip]
+    template: "{{ client_ip }} opened a connection and closed it without sending a request."
+    cause: Port scanners, load-balancer health checks that only test the TCP connection, or browsers pre-opening connections.
+    category: info
+    severity_override: info
+    examples:
+      - line: '198.51.100.23 - - [17/Nov/2026:22:50:03 +0000] "-" 400 0 "-" "-"'
+        expect:
+          text: 198.51.100.23 opened a connection and closed it without sending a request.
+    counter_examples:
+      - '198.51.100.23 - - [17/Nov/2026:22:50:03 +0000] "\x16\x03\x01\x02\x00\x01\x00\x01\xFC\x03\x03" 400 157 "-" "-"'
+
+  - id: nginx.access.proxy_attempt
+    title: "Proxy attempt from {{ client_ip }}"
+    match:
+      fields: {method: CONNECT}
+    extract: [client_ip, path, status]
+    template: "{{ client_ip }} tried to use this web server as a proxy to reach {{ path }}; nginx refused ({{ status }})."
+    cause: Scanners looking for open proxies.
+    category: security
+    tags: [probe]
+    severity_override: notice
+    examples:
+      - line: '10.0.0.16 - - [17/Nov/2026:22:50:16 +0000] "CONNECT example.com:443 HTTP/1.1" 400 157 "-" "-"'
+        expect:
+          text: 10.0.0.16 tried to use this web server as a proxy to reach example.com:443; nginx refused (400).
+    counter_examples:
+      - '10.0.0.5 - - [17/Nov/2026:22:50:01 +0000] "GET / HTTP/1.1" 200 615 "-" "Mozilla/5.0"'
+
+  # ---------------------------------------------------------------- access: server-side errors
+  - id: nginx.access.bad_gateway
+    title: "Backend failed: {{ method }} {{ path }} (502)"
+    match:
+      fields: {status: 502}
+    extract: [client_ip, method, path]
+    template: nginx could not get a valid answer from the backend application for {{ method }} {{ path }}, so {{ client_ip }} got a 502 error.
+    cause: The backend (app server, PHP-FPM, container) is down, crashed, or closed the connection.
+    action: Look at the matching line in the nginx error log (it names the upstream) and check that the backend is running.
+    category: availability
+    tags: [backend]
+    severity_override: error
+    examples:
+      - line: '10.0.0.10 - - [17/Nov/2026:22:50:08 +0000] "GET /api/v1/report HTTP/1.1" 502 157 "-" "Grafana/11.1.0"'
+        expect:
+          text: >-
+            nginx could not get a valid answer from the backend application for GET /api/v1/report,
+            so 10.0.0.10 got a 502 error.
+    counter_examples:
+      - '10.0.0.10 - - [17/Nov/2026:22:50:09 +0000] "GET /api/v1/report HTTP/1.1" 504 167 "-" "Grafana/11.1.0"'
+
+  - id: nginx.access.gateway_timeout
+    title: "Backend too slow: {{ method }} {{ path }} (504)"
+    match:
+      fields: {status: 504}
+    extract: [client_ip, method, path]
+    template: The backend application did not answer {{ method }} {{ path }} in time, so {{ client_ip }} got a 504 timeout error.
+    cause: A slow database query or overloaded backend; or proxy_read_timeout is shorter than the work takes.
+    action: Check the backend's load and logs for this request; raise proxy_read_timeout only if the slowness is expected.
+    category: performance
+    tags: [backend]
+    severity_override: error
+    examples:
+      - line: '10.0.0.10 - - [17/Nov/2026:22:50:09 +0000] "GET /api/v1/report HTTP/1.1" 504 167 "-" "Grafana/11.1.0"'
+        expect:
+          text: >-
+            The backend application did not answer GET /api/v1/report in time, so 10.0.0.10 got a 504
+            timeout error.
+    counter_examples:
+      - '10.0.0.10 - - [17/Nov/2026:22:50:08 +0000] "GET /api/v1/report HTTP/1.1" 502 157 "-" "Grafana/11.1.0"'
+
+  - id: nginx.access.server_error
+    title: "Server error: {{ method }} {{ path }} ({{ status }})"
+    match:
+      field: status
+      regex: ^5\d\d$
+    extract: [client_ip, method, path, status]
+    template: The request {{ method }} {{ path }} from {{ client_ip }} failed on the server side with error {{ status }}.
+    action: Check the nginx error log and the application's own log at this time.
+    category: availability
+    severity_override: error
+    examples:
+      - line: '10.0.0.22 - - [17/Nov/2026:22:50:22 +0000] "GET /a%20b HTTP/1.1" 500 177 "-" "Mozilla/5.0"'
+        expect:
+          text: The request GET /a%20b from 10.0.0.22 failed on the server side with error 500.
+    counter_examples:
+      - '10.0.0.23 - - [17/Nov/2026:22:50:23 +0000] "GET / HTTP/1.1" 499 0 "-" "Go-http-client/1.1"'
+
+  # ---------------------------------------------------------------- access: client-side statuses
+  - id: nginx.access.client_closed
+    title: "Client gave up: {{ path }} (499)"
+    match:
+      fields: {status: 499}
+    extract: [client_ip, method, path]
+    template: "{{ client_ip }} closed the connection before nginx could answer {{ method }} {{ path }}."
+    cause: The user navigated away or a client timeout fired; many 499s on one URL mean that URL is slow.
+    category: performance
+    severity_override: notice
+    examples:
+      - line: '10.0.0.23 - - [17/Nov/2026:22:50:23 +0000] "GET / HTTP/1.1" 499 0 "-" "Go-http-client/1.1"'
+        expect:
+          text: 10.0.0.23 closed the connection before nginx could answer GET /.
+    counter_examples:
+      - '10.0.0.22 - - [17/Nov/2026:22:50:22 +0000] "GET /a%20b HTTP/1.1" 500 177 "-" "Mozilla/5.0"'
+
+  - id: nginx.access.rate_limited
+    title: "Rate-limited: {{ client_ip }}"
+    match:
+      fields: {status: 429}
+    extract: [client_ip, method, path]
+    template: nginx refused {{ method }} {{ path }} from {{ client_ip }} because it sent too many requests too quickly (429).
+    category: security
+    severity_override: notice
+    examples:
+      - line: '203.0.113.50 - - [17/Nov/2026:22:50:13 +0000] "POST /api/v1/login HTTP/1.1" 429 169 "-" "python-requests/2.31.0"'
+        expect:
+          text: >-
+            nginx refused POST /api/v1/login from 203.0.113.50 because it sent too many requests too
+            quickly (429).
+    counter_examples:
+      - '10.0.0.9 - - [17/Nov/2026:22:50:06 +0000] "POST /api/v1/login HTTP/1.1" 401 52 "-" "okhttp/4.12.0"'
+
+  - id: nginx.access.too_large
+    title: "Upload too large from {{ client_ip }}"
+    match:
+      fields: {status: 413}
+    extract: [client_ip, method, path]
+    template: nginx rejected {{ method }} {{ path }} from {{ client_ip }} because the uploaded data was bigger than allowed (413).
+    action: If such uploads are legitimate, raise client_max_body_size for this server or location.
+    category: configuration
+    severity_override: warning
+    examples:
+      - line: '10.0.0.35 - - [17/Nov/2026:22:50:15 +0000] "POST /upload HTTP/1.1" 413 183 "-" "Mozilla/5.0"'
+        expect:
+          text: >-
+            nginx rejected POST /upload from 10.0.0.35 because the uploaded data was bigger than
+            allowed (413).
+    counter_examples:
+      - '10.0.0.5 - - [17/Nov/2026:22:50:01 +0000] "GET /favicon.ico HTTP/1.1" 404 153 "http://example.com/" "Mozilla/5.0"'
+
+  - id: nginx.access.unauthorized
+    title: "Login required or failed: {{ path }}"
+    match:
+      fields: {status: 401}
+    extract: [client_ip, method, path]
+    template: "{{ client_ip }} was refused {{ method }} {{ path }} because it is not logged in or its credentials were wrong (401)."
+    action: One 401 is normal; many from {{ client_ip | shquote }} in a short time suggest password guessing.
+    category: security
+    severity_override: notice
+    examples:
+      - line: '10.0.0.9 - - [17/Nov/2026:22:50:06 +0000] "POST /api/v1/login HTTP/1.1" 401 52 "-" "okhttp/4.12.0"'
+        expect:
+          text: >-
+            10.0.0.9 was refused POST /api/v1/login because it is not logged in or its credentials
+            were wrong (401).
+    counter_examples:
+      - '10.0.0.9 - - [17/Nov/2026:22:50:07 +0000] "POST /api/v1/login HTTP/1.1" 200 412 "-" "okhttp/4.12.0"'
+
+  - id: nginx.access.forbidden
+    title: "Forbidden: {{ path }}"
+    match:
+      fields: {status: 403}
+    extract: [client_ip, method, path]
+    template: nginx refused {{ method }} {{ path }} from {{ client_ip }} (403 forbidden).
+    cause: A deny rule, a directory without an index file, or file permissions nginx cannot read.
+    action: If this should be allowed, the nginx error log line at the same time says which of these applies.
+    category: security
+    severity_override: notice
+    examples:
+      - line: '10.0.0.31 - - [17/Nov/2026:22:50:10 +0000] "GET /uploads/ HTTP/1.1" 403 153 "-" "Mozilla/5.0"'
+        expect:
+          text: nginx refused GET /uploads/ from 10.0.0.31 (403 forbidden).
+    counter_examples:
+      - '10.0.0.5 - - [17/Nov/2026:22:50:01 +0000] "GET /favicon.ico HTTP/1.1" 404 153 "http://example.com/" "Mozilla/5.0"'
+
+  - id: nginx.access.not_found
+    title: "Not found: {{ path }}"
+    match:
+      fields: {status: 404}
+    extract: [client_ip, path]
+    template: "{{ client_ip }} asked for {{ path }}, which does not exist on this site (404)."
+    action: Nothing to do for a few. Many 404s for the same path point to a broken link or a missing file worth adding.
+    category: info
+    severity_override: info
+    examples:
+      - line: '10.0.0.5 - - [17/Nov/2026:22:50:01 +0000] "GET /favicon.ico HTTP/1.1" 404 153 "http://example.com/" "Mozilla/5.0"'
+        expect:
+          text: 10.0.0.5 asked for /favicon.ico, which does not exist on this site (404).
+    counter_examples:
+      - '203.0.113.9 - - [17/Nov/2026:22:50:02 +0000] "GET /wp-login.php HTTP/1.1" 404 153 "-" "Mozilla/5.0 zgrab/0.x"'
+
+  - id: nginx.access.ok
+    title: "{{ method }} {{ path }} ({{ status }})"
+    match:
+      field: status
+      regex: ^[23]\d\d$
+    extract: [client_ip, method, path, status]
+    template: nginx answered {{ method }} {{ path }} for {{ client_ip }} successfully ({{ status }}).
+    category: info
+    severity_override: info
+    examples:
+      - line: '10.0.0.5 - - [17/Nov/2026:22:50:01 +0000] "GET / HTTP/1.1" 200 615 "-" "Mozilla/5.0"'
+        expect:
+          text: nginx answered GET / for 10.0.0.5 successfully (200).
+    counter_examples:
+      - '10.0.0.5 - - [17/Nov/2026:22:50:01 +0000] "GET /favicon.ico HTTP/1.1" 404 153 "http://example.com/" "Mozilla/5.0"'
+
+  # ---------------------------------------------------------------- error log: upstreams
+  - id: nginx.error.upstream_refused
+    title: "Backend refused connection: {{ upstream }}"
+    match:
+      regex: connect\(\) failed \(111:\s*Connection refused\) while connecting to upstream
+    extract: [upstream]
+    optional: [client_ip]
+    template: nginx tried to pass a request to the backend {{ upstream }}, but nothing is listening there (connection refused).
+    cause: The backend application is stopped, crashed, or listens on a different port.
+    action: Start or fix the backend, then check it answers locally (e.g. curl {{ upstream | shquote }}).
+    category: availability
+    tags: [backend]
+    severity_override: error
+    examples:
+      - line: '2026/11/17 22:50:03 [error] 29#29: *3 connect() failed (111: Connection refused) while connecting to upstream, client: 10.0.0.10, server: api.example.com, request: "GET /api/v1/report HTTP/1.1", upstream: "http://127.0.0.1:8080/api/v1/report", host: "api.example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            nginx tried to pass a request to the backend http://127.0.0.1:8080/api/v1/report, but
+            nothing is listening there (connection refused).
+    counter_examples:
+      - line: '2026/11/17 22:50:04 [error] 29#29: *4 upstream timed out (110: Connection timed out) while reading response header from upstream, client: 10.0.0.10, server: api.example.com, request: "GET /api/v1/report HTTP/1.1", upstream: "http://127.0.0.1:8080/api/v1/report", host: "api.example.com"'
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.upstream_timeout
+    title: "Backend timed out: {{ upstream }}"
+    match:
+      regex: upstream timed out \(110
+    extract: [upstream]
+    template: The backend {{ upstream }} accepted the request but took too long to answer, so nginx gave up.
+    cause: The backend is overloaded or the request does slow work (a big report, a slow database query).
+    action: Check the backend's load and logs; raise proxy_read_timeout only if the slowness is expected.
+    category: performance
+    tags: [backend]
+    severity_override: error
+    examples:
+      - line: '2026/11/17 22:50:04 [error] 29#29: *4 upstream timed out (110: Connection timed out) while reading response header from upstream, client: 10.0.0.10, server: api.example.com, request: "GET /api/v1/report HTTP/1.1", upstream: "http://127.0.0.1:8080/api/v1/report", host: "api.example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            The backend http://127.0.0.1:8080/api/v1/report accepted the request but took too long to
+            answer, so nginx gave up.
+    counter_examples:
+      - line: '2026/11/17 22:50:03 [error] 29#29: *3 connect() failed (111: Connection refused) while connecting to upstream, client: 10.0.0.10, server: api.example.com, request: "GET /api/v1/report HTTP/1.1", upstream: "http://127.0.0.1:8080/api/v1/report", host: "api.example.com"'
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.no_live_upstreams
+    title: "All backends down: {{ upstream }}"
+    match:
+      regex: no live upstreams
+    extract: [upstream]
+    template: Every backend server in the upstream group for {{ upstream }} is marked as failed, so nginx could not forward the request at all.
+    action: Bring at least one backend back; nginx retries failed ones after fail_timeout (10 s by default).
+    category: availability
+    tags: [backend]
+    severity_override: critical
+    examples:
+      - line: '2026/11/17 22:50:18 [error] 30#30: *16 no live upstreams while connecting to upstream, client: 10.0.0.36, server: _, request: "GET / HTTP/1.1", upstream: "http://backend/", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            Every backend server in the upstream group for http://backend/ is marked as failed, so
+            nginx could not forward the request at all.
+    counter_examples:
+      - line: '2026/11/17 22:50:04 [error] 29#29: *4 upstream timed out (110: Connection timed out) while reading response header from upstream, client: 10.0.0.10, server: api.example.com, request: "GET /api/v1/report HTTP/1.1", upstream: "http://127.0.0.1:8080/api/v1/report", host: "api.example.com"'
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.php_fatal
+    title: PHP application error
+    match:
+      regex: 'FastCGI sent in stderr: "PHP message: PHP (?P<kind>Fatal error|Parse error|Warning):\s*(?P<detail>.+?)(?:" while|$)'
+    extract: [request]
+    template: "The PHP application crashed while handling {{ request }}: {{ kind }}, {{ detail }}"
+    action: Fix the PHP code at the file and line shown; the visitor got an error page.
+    category: availability
+    tags: [backend]
+    severity_override: error
+    examples:
+      - line: '2026/11/17 22:50:11 [error] 29#29: *10 FastCGI sent in stderr: "PHP message: PHP Fatal error:  Uncaught Error: Call to undefined function foo() in /var/www/html/index.php:3" while reading response header from upstream, client: 10.0.0.32, server: example.com, request: "GET /index.php HTTP/1.1", upstream: "fastcgi://unix:/run/php/php8.2-fpm.sock:", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            The PHP application crashed while handling GET /index.php HTTP/1.1: Fatal error, Uncaught
+            Error: Call to undefined function foo() in /var/www/html/index.php:3
+    counter_examples:
+      - line: '2026/11/17 22:50:18 [error] 30#30: *16 no live upstreams while connecting to upstream, client: 10.0.0.36, server: _, request: "GET / HTTP/1.1", upstream: "http://backend/", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+
+  # ---------------------------------------------------------------- error log: files and access
+  - id: nginx.error.file_missing
+    title: "File not found: {{ file }}"
+    match:
+      regex: open\(\) "(?P<file>[^"]+)" failed \(2:\s*No such file or directory\)
+    optional: [client_ip]
+    template: "nginx looked for {{ file }} on disk{% if client_ip %} for {{ client_ip }}{% endif %}, but it does not exist (the visitor got a 404)."
+    action: Add the file, or fix the root/alias for this location if the path looks wrong.
+    category: info
+    severity_override: info
+    examples:
+      - line: '2026/11/17 22:50:01 [error] 29#29: *1 open() "/usr/share/nginx/html/favicon.ico" failed (2: No such file or directory), client: 10.0.0.5, server: localhost, request: "GET /favicon.ico HTTP/1.1", host: "example.com", referrer: "http://example.com/"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            nginx looked for /usr/share/nginx/html/favicon.ico on disk for 10.0.0.5, but it does not
+            exist (the visitor got a 404).
+    counter_examples:
+      - line: '2026/11/17 22:50:01 [crit] 29#29: *1 open() "/var/www/private/index.html" failed (13: Permission denied), client: 10.0.0.5, server: localhost, request: "GET / HTTP/1.1", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.permission_denied
+    title: "Permission denied: {{ file }}"
+    match:
+      regex: '"(?P<file>/[^"]+)" failed \(13:\s*Permission denied\)'
+    template: nginx is not allowed to read {{ file }}, so visitors get an error.
+    cause: The file or one of its parent directories is not readable by the nginx worker user (www-data / nginx), or SELinux blocks it.
+    action: Check with "namei -l {{ file | shquote }}" and fix permissions (directories need x, files need r for the nginx user).
+    category: configuration
+    severity_override: error
+    examples:
+      - line: '2026/11/17 22:50:01 [crit] 29#29: *1 open() "/var/www/private/index.html" failed (13: Permission denied), client: 10.0.0.5, server: localhost, request: "GET / HTTP/1.1", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: nginx is not allowed to read /var/www/private/index.html, so visitors get an error.
+    counter_examples:
+      - line: '2026/11/17 22:50:01 [error] 29#29: *1 open() "/usr/share/nginx/html/favicon.ico" failed (2: No such file or directory), client: 10.0.0.5, server: localhost, request: "GET /favicon.ico HTTP/1.1", host: "example.com", referrer: "http://example.com/"'
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.directory_index_forbidden
+    title: "No index file in {{ directory }}"
+    match:
+      regex: directory index of "(?P<directory>[^"]+)" is forbidden
+    template: Someone opened the folder {{ directory }}, which has no index file, and nginx does not list folder contents, so it answered 403.
+    action: Expected for upload folders. If a page should show here, add an index.html (or index.php) there.
+    category: info
+    severity_override: info
+    examples:
+      - line: '2026/11/17 22:50:10 [error] 29#29: *9 directory index of "/var/www/html/uploads/" is forbidden, client: 10.0.0.31, server: example.com, request: "GET /uploads/ HTTP/1.1", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            Someone opened the folder /var/www/html/uploads/, which has no index file, and nginx does
+            not list folder contents, so it answered 403.
+    counter_examples:
+      - line: '2026/11/17 22:50:09 [error] 29#29: *8 access forbidden by rule, client: 203.0.113.9, server: example.com, request: "GET /.git/config HTTP/1.1", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.forbidden_by_rule
+    title: "Blocked by rule: {{ request }}"
+    match:
+      regex: access forbidden by rule
+    extract: [client_ip, request]
+    template: A "deny" rule in the nginx configuration blocked {{ request }} from {{ client_ip }}.
+    category: security
+    severity_override: notice
+    examples:
+      - line: '2026/11/17 22:50:09 [error] 29#29: *8 access forbidden by rule, client: 203.0.113.9, server: example.com, request: "GET /.git/config HTTP/1.1", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: A "deny" rule in the nginx configuration blocked GET /.git/config HTTP/1.1 from 203.0.113.9.
+    counter_examples:
+      - line: '2026/11/17 22:50:10 [error] 29#29: *9 directory index of "/var/www/html/uploads/" is forbidden, client: 10.0.0.31, server: example.com, request: "GET /uploads/ HTTP/1.1", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.limiting_requests
+    title: "Rate limit hit by {{ client_ip }}"
+    match:
+      regex: limiting requests, excess:\s*\S+ by zone "(?P<zone>[^"]+)"
+    extract: [client_ip]
+    optional: [request]
+    template: "{{ client_ip }} sent requests faster than the \"{{ zone }}\" rate limit allows, so nginx rejected some{% if request %} ({{ request }}){% endif %}."
+    cause: A client polling too fast, or someone guessing passwords.
+    category: security
+    severity_override: notice
+    examples:
+      - line: '2026/11/17 22:50:13 [error] 29#29: *12 limiting requests, excess: 10.520 by zone "api", client: 203.0.113.50, server: api.example.com, request: "POST /api/v1/login HTTP/1.1", host: "api.example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            203.0.113.50 sent requests faster than the "api" rate limit allows, so nginx rejected some
+            (POST /api/v1/login HTTP/1.1).
+    counter_examples:
+      - line: '2026/11/17 22:50:09 [error] 29#29: *8 access forbidden by rule, client: 203.0.113.9, server: example.com, request: "GET /.git/config HTTP/1.1", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.body_too_large
+    title: "Upload too large ({{ bytes | int | filesizeformat }})"
+    match:
+      regex: client intended to send too large body:\s*(?P<bytes>\d+) bytes
+    extract: [client_ip]
+    template: "{{ client_ip }} tried to upload {{ bytes | int | filesizeformat }}, more than client_max_body_size allows, so nginx refused it (413)."
+    action: Raise client_max_body_size for this server/location if such uploads are legitimate.
+    category: configuration
+    severity_override: warning
+    examples:
+      - line: '2026/11/17 22:50:15 [error] 29#29: *14 client intended to send too large body: 104857601 bytes, client: 10.0.0.35, server: upload.example.com, request: "POST /upload HTTP/1.1", host: "upload.example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            10.0.0.35 tried to upload 104.9 MB, more than client_max_body_size allows, so nginx
+            refused it (413).
+    counter_examples:
+      - line: '2026/11/17 22:50:14 [warn] 29#29: *13 a client request body is buffered to a temporary file /var/cache/nginx/client_temp/0000000002, client: 10.0.0.34, server: upload.example.com, request: "POST /upload HTTP/1.1", host: "upload.example.com"'
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.buffered_to_disk
+    title: Large body buffered to disk
+    match:
+      regex: (?P<what>an upstream response|a client request body) is buffered to a temporary file
+    template: "{{ what | capitalize }} was too big for nginx's memory buffers and was written to a temporary file. This works, just a bit slower."
+    action: Only worth tuning (proxy_buffers / client_body_buffer_size) if it happens constantly.
+    category: performance
+    severity_override: info
+    examples:
+      - line: '2026/11/17 22:50:14 [warn] 29#29: *13 a client request body is buffered to a temporary file /var/cache/nginx/client_temp/0000000002, client: 10.0.0.34, server: upload.example.com, request: "POST /upload HTTP/1.1", host: "upload.example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            A client request body was too big for nginx's memory buffers and was written to a
+            temporary file. This works, just a bit slower.
+    counter_examples:
+      - line: '2026/11/17 22:50:15 [error] 29#29: *14 client intended to send too large body: 104857601 bytes, client: 10.0.0.35, server: upload.example.com, request: "POST /upload HTTP/1.1", host: "upload.example.com"'
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.tls_handshake_failed
+    title: "TLS handshake failed with {{ client_ip }}"
+    match:
+      regex: SSL_do_handshake\(\) failed
+    extract: [client_ip]
+    template: An HTTPS connection from {{ client_ip }} failed before any request was made; the client and nginx could not agree on encryption.
+    cause: Old or unusual clients, scanners, or clients that do not trust the certificate. Logged as "crit" but rarely a server problem.
+    action: Ignore unless your own users report HTTPS errors; then compare ssl_protocols/ssl_ciphers with what their clients support.
+    category: security
+    severity_override: notice
+    confidence: 0.7
+    examples:
+      - line: '2026/11/17 22:50:06 [crit] 29#29: *6 SSL_do_handshake() failed (SSL: error:0A00006C:SSL routines::bad key share) while SSL handshaking, client: 198.51.100.23, server: 0.0.0.0:443'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            An HTTPS connection from 198.51.100.23 failed before any request was made; the client and
+            nginx could not agree on encryption.
+          severity: notice
+    counter_examples:
+      - line: '2026/11/17 22:50:12 [info] 29#29: *11 client 10.0.0.33 closed keepalive connection'
+        source: file:/var/log/nginx/error.log
+
+  # ---------------------------------------------------------------- error log: server
+  - id: nginx.error.port_in_use
+    title: "Port in use: {{ address }}"
+    match:
+      regex: bind\(\) to (?P<address>\S+?:(?P<port>\d+)) failed \(98:\s*Address already in use\)
+    template: nginx cannot listen on {{ address }} because another program already uses that port, so it cannot start.
+    action: "Find the program with: sudo ss -ltnp | grep :{{ port | shquote }} (often another nginx, Apache, or a container)."
+    category: availability
+    severity_override: critical
+    examples:
+      - line: "2026/11/17 22:50:07 [emerg] 1#1: bind() to 0.0.0.0:80 failed (98: Address already in use)"
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: nginx cannot listen on 0.0.0.0:80 because another program already uses that port, so it cannot start.
+          action: "Find the program with: sudo ss -ltnp | grep :80 (often another nginx, Apache, or a container)."
+    counter_examples:
+      - line: "2026/11/17 22:50:07 [emerg] 1#1: still could not bind()"
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.error.worker_connections
+    title: Too many connections
+    match:
+      regex: (?<!\d)(?P<limit>\d+) worker_connections are not enough
+    template: nginx reached its limit of {{ limit }} simultaneous connections per worker; extra visitors are being turned away.
+    action: Raise worker_connections in the events block of nginx.conf (and the open-files limit), or find out why connections pile up (slow backend).
+    category: performance
+    severity_override: critical
+    examples:
+      - line: '2026/11/17 22:50:08 [alert] 29#29: *7 768 worker_connections are not enough while connecting to upstream, client: 10.0.0.30, server: _, request: "GET / HTTP/1.1", upstream: "http://10.0.5.3:80/", host: "example.com"'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            nginx reached its limit of 768 simultaneous connections per worker; extra visitors are
+            being turned away.
+    counter_examples:
+      - line: "2026/11/17 22:50:07 [emerg] 1#1: bind() to 0.0.0.0:80 failed (98: Address already in use)"
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.config.error
+    title: "Configuration error in {{ file }}:{{ line }}"
+    match:
+      regex: ^(?P<problem>.+?) in (?P<file>/\S+?):(?P<line>\d+)\s*$
+    template: "nginx rejected its configuration: {{ problem }} ({{ file }}, line {{ line }}). It keeps running with the old settings or will not start."
+    action: Fix line {{ line | shquote }} of {{ file | shquote }}, then run "sudo nginx -t" before reloading.
+    category: configuration
+    severity_override: critical
+    examples:
+      - line: 'nginx: [emerg] unknown directive "servr" in /etc/nginx/sites-enabled/default:3'
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            nginx rejected its configuration: unknown directive "servr" (/etc/nginx/sites-enabled/default,
+            line 3). It keeps running with the old settings or will not start.
+    counter_examples:
+      - line: "2026/11/17 22:50:07 [emerg] 1#1: bind() to 0.0.0.0:80 failed (98: Address already in use)"
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.server.reload
+    title: nginx reloading configuration
+    match:
+      regex: 'signal 1 \(SIGHUP\) received(?: from (?P<pid>\d+))?, reconfiguring'
+    template: nginx was asked to reload its configuration (for example "systemctl reload nginx") and is applying it without dropping connections.
+    category: configuration
+    severity_override: notice
+    examples:
+      - line: "2026/11/17 22:50:16 [notice] 1#1: signal 1 (SIGHUP) received from 4321, reconfiguring"
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: >-
+            nginx was asked to reload its configuration (for example "systemctl reload nginx") and is
+            applying it without dropping connections.
+    counter_examples:
+      - line: "2026/11/17 22:50:16 [notice] 1#1: signal 3 (SIGQUIT) received from 1, shutting down"
+        source: file:/var/log/nginx/error.log
+
+  - id: nginx.server.shutdown
+    title: nginx shutting down
+    match:
+      regex: 'signal (?:3 \(SIGQUIT\)|15 \(SIGTERM\)) received(?: from \d+)?, (?:shutting down|exiting)'
+    template: nginx was asked to stop; it finishes current requests and then exits.
+    category: availability
+    severity_override: notice
+    examples:
+      - line: "2026/11/17 22:50:16 [notice] 1#1: signal 3 (SIGQUIT) received from 1, shutting down"
+        source: file:/var/log/nginx/error.log
+        expect:
+          text: nginx was asked to stop; it finishes current requests and then exits.
+    counter_examples:
+      - line: "2026/11/17 22:50:16 [notice] 1#1: signal 1 (SIGHUP) received from 4321, reconfiguring"
+        source: file:/var/log/nginx/error.log

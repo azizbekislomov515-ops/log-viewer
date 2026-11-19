@@ -1,0 +1,31 @@
+2026-11-17 22:50:01.000  INFO 1 --- [main] c.e.Application : Started Application in 3.2 seconds
+2026-11-17 22:50:02.000 ERROR 1 --- [nio-8080-exec-1] o.a.c.c.C.[.[.[/].[dispatcherServlet] : Servlet.service() threw exception
+java.lang.NullPointerException: Cannot invoke "String.length()" because "s" is null
+	at com.example.web.Controller.handle(Controller.java:42)
+	at com.example.web.Controller$$FastClassBySpringCGLIB$$1.invoke(<generated>)
+	at org.springframework.cglib.proxy.MethodProxy.invoke(MethodProxy.java:218)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+2026-11-17 22:50:03.000  WARN 1 --- [main] c.e.Pool : Pool is at 90% capacity
+2026-11-17 22:50:04.000 ERROR 1 --- [main] c.e.Repo : Query failed
+org.springframework.dao.DataAccessResourceFailureException: Unable to acquire JDBC Connection
+	at org.springframework.orm.jpa.vendor.HibernateJpaDialect.convert(HibernateJpaDialect.java:276)
+	at com.example.repo.OrderRepo.findAll(OrderRepo.java:19)
+	... 87 common frames omitted
+Caused by: org.hibernate.exception.JDBCConnectionException: Unable to acquire JDBC Connection
+	at org.hibernate.exception.internal.SQLStateConversionDelegate.convert(SQLStateConversionDelegate.java:100)
+	... 12 more
+Caused by: java.net.ConnectException: Connection refused
+	at java.base/sun.nio.ch.Net.pollConnect(Native Method)
+	at java.base/sun.nio.ch.NioSocketImpl.connect(NioSocketImpl.java:682)
+	... 25 more
+2026-11-17 22:50:05.000  INFO 1 --- [main] c.e.Health : health ok
+Exception in thread "main" java.lang.IllegalStateException: boom
+	at com.example.Main.main(Main.java:5)
+2026-11-17 22:50:06.000  INFO 1 --- [main] c.e.Application : Stopping
+2026-11-17 22:50:07.000 ERROR 1 --- [main] c.e.Job : job failed
+java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.util.Arrays.copyOf(Arrays.java:3512)
+	at com.example.Job.run(Job.java:77)
+2026-11-17 22:50:08.000  INFO 1 --- [main] c.e.Application : Bye
+2026-11-17 22:50:09.000 ERROR 1 --- [main] c.e.Job : no trace attached
+java.lang.RuntimeException

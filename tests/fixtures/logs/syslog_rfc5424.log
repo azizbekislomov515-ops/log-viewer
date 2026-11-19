@@ -1,0 +1,34 @@
+<34>1 2026-11-17T22:50:01.003Z mymachine.example.com su - ID47 - BOM'su root' failed for lonvick on /dev/pts/8
+<165>1 2026-11-17T22:50:02.000003-07:00 192.0.2.1 myproc 8710 - - %% It's time to make the do-nuts.
+<165>1 2026-11-17T22:50:03.003Z mymachine.example.com evntslog - ID47 [exampleSDID@32473 iut="3" eventSource="Application" eventID="1011"] An application event log entry...
+<165>1 2026-11-17T22:50:04.003Z mymachine.example.com evntslog - ID47 [exampleSDID@32473 iut="3" eventSource="Application" eventID="1011"][examplePriority@32473 class="high"]
+<14>1 2026-11-17T22:50:05+00:00 web01 nginx 1234 - - GET /health 200
+<11>1 2026-11-17T22:50:06.123456+05:00 db01 postgres 999 - - FATAL:  password authentication failed for user "app"
+<12>1 2026-11-17T22:50:07Z db01 postgres 999 - - WARNING:  there is no transaction in progress
+<15>1 2026-11-17T22:50:08Z app01 api 42 REQ [meta sequenceId="1"] debug request id=abc
+<13>1 2026-11-17T22:50:09Z app01 api 42 REQ [meta sequenceId="2"] notice: config reloaded
+<9>1 2026-11-17T22:50:10Z app01 api 42 REQ - alert: disk almost full
+<8>1 2026-11-17T22:50:11Z app01 api 42 REQ - emergency: shutting down
+<30>1 2026-11-17T22:50:12Z host01 systemd 1 - - Started session-12.scope.
+<86>1 2026-11-17T22:50:13Z host01 sshd 1301 - - Accepted publickey for azik from 192.168.1.10 port 40000 ssh2
+<38>1 2026-11-17T22:50:14Z host01 sshd 1302 - - Connection closed by 203.0.113.9 port 51234 [preauth]
+<134>1 2026-11-17T22:50:15Z fw01 filterlog 5555 - - 5,,,1000000103,igb0,match,block,in,4,0x0,,64,0,0,DF,6,tcp
+<29>1 2026-11-17T22:50:16Z nas01 smbd 777 - - [2026/11/17 22:50:16.000000,  0] ../../source3/smbd/server.c:1741(main)
+<29>1 2026-11-17T22:50:17Z nas01 smbd 777 - [origin ip="10.0.0.3"] smbd version 4.19.5 started.
+<14>1 2026-11-17T22:50:18Z k8s-node1 kubelet 2048 - - I1117 22:50:18.123456 2048 kubelet.go:2345] "SyncLoop ADD" source="api"
+<11>1 2026-11-17T22:50:19Z k8s-node1 kubelet 2048 - - E1117 22:50:19.123456 2048 pod_workers.go:1298] "Error syncing pod, skipping"
+<14>1 - host02 app 1 - - no timestamp (nil)
+<14>1 2026-11-17T22:50:20Z - - - - - all nil header fields
+<14>1 2026-11-17T22:50:21Z host03 app - - -
+<14>1 2026-11-17T22:50:22Z host03 app - - [escaped@1 v="a \] b"] escaped bracket in SD
+<14>1 2026-11-17T22:50:23Z host03 app - - - unicode: héllo wörld ✓
+<22>1 2026-11-17T22:50:24Z mail01 postfix/qmgr 123 - - 4A1B2C3D: from=<alice@example.com>, size=1234, nrcpt=1 (queue active)
+<19>1 2026-11-17T22:50:25Z mail01 postfix/smtp 124 - - 4A1B2C3D: to=<bob@example.net>, status=deferred (connect to mx.example.net[198.51.100.1]:25: Connection timed out)
+<14>1 2026-11-17T22:50:26Z host04 cron 55 - - (root) CMD (/usr/local/bin/backup.sh)
+<14>1 2026-11-17T22:50:27Z host04 backup 56 - - backup finished in 42s
+<14>1 2026-11-17T22:50:28Z host05 app 57 - - message with trailing spaces   
+<14>1 2026-13-45T25:61:00Z host05 app 58 - - impossible timestamp
+<14>2 2026-11-17T22:50:30Z host06 app 59 - [bad sd no close bracket
+<200>1 2026-11-17T22:50:31Z host07 app 60 - - priority out of range
+<14> 2026-11-17T22:50:32Z missing version
+<14>1 2026-11-17T22:50:33Z

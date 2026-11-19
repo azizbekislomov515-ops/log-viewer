@@ -11,3 +11,5 @@ dist/
 htmlcov/
 *.sqlite3
 *.db
+/build-deb.log
+/qa-*.log

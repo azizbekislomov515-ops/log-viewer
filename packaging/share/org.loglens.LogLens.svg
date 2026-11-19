@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>LogLens</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26364A"/>
+      <stop offset="1" stop-color="#141C27"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9ED8FF" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#9ED8FF" stop-opacity="0.08"/>
+    </linearGradient>
+</defs>
+  <!-- the "page" of log lines -->
+  <rect x="16" y="16" width="224" height="224" rx="44" fill="url(#bg)"/>
+  <g stroke-linecap="round" stroke-width="12">
+    <line x1="52" y1="62" x2="150" y2="62" stroke="#5C6F86"/>
+    <line x1="52" y1="92" x2="196" y2="92" stroke="#5C6F86"/>
+    <line x1="52" y1="122" x2="128" y2="122" stroke="#5C6F86"/>
+    <line x1="52" y1="152" x2="176" y2="152" stroke="#5C6F86"/>
+    <line x1="52" y1="182" x2="112" y2="182" stroke="#5C6F86"/>
+  </g>
+  <!-- under the lens the same lines are coloured by severity: meaning appears.
+       Segments are the parts of each line inside the lens (no clipPath, for renderers
+       that ignore it). -->
+  <circle cx="146" cy="110" r="52" fill="#1B2A3B"/>
+  <g stroke-width="12">
+    <line x1="126" y1="62" x2="150" y2="62" stroke="#4FC08D"/>
+    <line x1="97" y1="92" x2="195" y2="92" stroke="#F2B531"/>
+    <line x1="95" y1="122" x2="128" y2="122" stroke="#4FC08D"/>
+    <line x1="115" y1="152" x2="176" y2="152" stroke="#F0605D"/>
+  </g>
+  <circle cx="146" cy="110" r="58" fill="url(#glass)"/>
+  <circle cx="146" cy="110" r="58" fill="none" stroke="#E8F0F8" stroke-width="12"/>
+  <line x1="188" y1="152" x2="222" y2="186" stroke="#E8F0F8" stroke-width="20" stroke-linecap="round"/>
+</svg>

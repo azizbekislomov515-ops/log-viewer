@@ -1,0 +1,33 @@
+{"fields": {"addr": ":3000", "level": "info"}, "message": "starting server", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"level": "warning", "path": "/etc/app.yaml"}, "message": "config file not found, using defaults", "parsed": true, "parser": "logfmt", "severity": "WARNING", "ts": "2026-11-17T22:50:02+00:00"}
+{"fields": {"component": "db", "level": "error"}, "message": "dial tcp 10.0.0.5:5432: connect: connection refused", "parsed": true, "parser": "logfmt", "severity": "ERROR", "ts": "2026-11-17T22:50:03+00:00"}
+{"fields": {"caller": "main.go:120", "level": "info", "mode": "server"}, "message": "Starting Prometheus Server", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:04.123000+00:00"}
+{"fields": {"caller": "compact.go:519", "component": "tsdb", "duration": "123.4ms", "level": "info"}, "message": "write block", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:05.456000+00:00"}
+{"fields": {"address": "[::]:3000", "level": "info", "logger": "http.server"}, "message": "HTTP Server Listen", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:06+00:00"}
+{"fields": {"error": "user not found", "level": "eror", "logger": "context"}, "message": "Failed to look up user", "parsed": true, "parser": "logfmt", "severity": "ERROR", "ts": "2026-11-17T22:50:07+00:00"}
+{"fields": {"level": "debug", "n": "1"}, "message": "tick", "parsed": true, "parser": "logfmt", "severity": "DEBUG", "ts": "2026-11-17T22:50:08+00:00"}
+{"fields": {"caller": "loki.go:400", "level": "info"}, "message": "Loki started", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:09+00:00"}
+{"fields": {"at": "info", "bytes": "1234", "connect": "0ms", "dyno": "web.1", "fwd": "1.2.3.4", "host": "app.herokuapp.com", "method": "GET", "path": "/", "request_id": "abc", "service": "3ms", "status": "200"}, "message": "at=info method=GET path=\"/\" host=app.herokuapp.com request_id=abc fwd=\"1.2.3.4\" dyno=web.1 connect=0ms service=3ms status=200 bytes=1234", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"at": "error", "code": "H12", "desc": "Request timeout", "host": "app.herokuapp.com", "method": "GET", "path": "/slow", "status": "503"}, "message": "at=error code=H12 desc=\"Request timeout\" method=GET path=\"/slow\" host=app.herokuapp.com status=503", "parsed": true, "parser": "logfmt", "severity": "ERROR", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"level": "fatal"}, "message": "cannot start: port in use", "parsed": true, "parser": "logfmt", "severity": "CRITICAL", "ts": "2026-11-17T22:50:12+00:00"}
+{"fields": {"level": "panic"}, "message": "nil pointer dereference", "parsed": true, "parser": "logfmt", "severity": "CRITICAL", "ts": "2026-11-17T22:50:13+00:00"}
+{"fields": {"level": "trace"}, "message": "very chatty", "parsed": true, "parser": "logfmt", "severity": "TRACE", "ts": "2026-11-17T22:50:14+00:00"}
+{"fields": {"level": "info", "user": "o'brien"}, "message": "escaped \"quotes\" inside", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:15+00:00"}
+{"fields": {"level": "info", "tab": "a\tb"}, "message": "newline\nescape", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:16+00:00"}
+{"fields": {"k": "v", "level": "info"}, "message": "go escape \\x41", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:17+00:00"}
+{"fields": {"empty": "", "level": "info"}, "message": "", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:18+00:00"}
+{"fields": {"emoji": "🚀", "level": "info"}, "message": "unicode ✓ ok", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:19+00:00"}
+{"fields": {"level": "warning"}, "message": "offset time", "parsed": true, "parser": "logfmt", "severity": "WARNING", "ts": "2026-11-17T17:50:20+00:00"}
+{"fields": {"level": "info"}, "message": "epoch seconds", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:21+00:00"}
+{"fields": {"level": "info"}, "message": "epoch millis", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:22.123000+00:00"}
+{"fields": {"level": "info"}, "message": "space separated, naive local", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:23+00:00"}
+{"fields": {"level": "info"}, "message": "no time", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"k": "v"}, "message": "only message", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"baz": "qux", "foo": "bar"}, "message": "foo=bar baz=qux", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"bad_timestamp": "not a time", "level": "info", "time": "not a time"}, "message": "bad time", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "time=\"2026-11-17T22:50:28Z\" level=info msg=\"unterminated", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "just text with a=b in it", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "a=b", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "key=value trailing words", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "=novalue k=v", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"level": "info"}, "message": "extra spaces", "parsed": true, "parser": "logfmt", "severity": "INFO", "ts": "2026-11-17T22:50:31+00:00"}

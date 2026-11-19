@@ -1,0 +1,32 @@
+2026-11-17 22:50:01,000 INFO app: worker started
+2026-11-17 22:50:02,000 ERROR app: job 42 failed
+Traceback (most recent call last):
+  File "/app/worker.py", line 88, in run
+    result = handler(job)
+             ^^^^^^^^^^^^
+  File "/app/handlers.py", line 12, in handler
+    return int(job.payload["count"])
+ValueError: invalid literal for int() with base 10: 'abc'
+2026-11-17 22:50:03,000 INFO app: job 43 done
+2026-11-17 22:50:04,000 ERROR app: chained failure
+Traceback (most recent call last):
+  File "/app/db.py", line 30, in connect
+    sock.connect(addr)
+ConnectionRefusedError: [Errno 111] Connection refused
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/worker.py", line 50, in main
+    db.connect()
+  File "/app/db.py", line 32, in connect
+    raise DatabaseError("cannot reach database") from exc
+app.errors.DatabaseError: cannot reach database
+2026-11-17 22:50:05,000 WARNING app: retrying in 5s
+Traceback (most recent call last):
+  File "/usr/bin/tool", line 8, in <module>
+    sys.exit(main())
+KeyboardInterrupt
+2026-11-17 22:50:06,000 INFO app: shutting down
+  orphan indented line at the start of nothing
+2026-11-17 22:50:07,000 INFO app: bye

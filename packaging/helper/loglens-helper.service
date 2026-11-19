@@ -1,0 +1,44 @@
+[Unit]
+Description=LogLens read-only log helper
+Documentation=file:///usr/share/doc/loglens/SECURITY.md
+Requires=loglens-helper.socket
+
+[Service]
+ExecStart=/usr/bin/loglens-helper --config /etc/loglens/helper.toml
+# Not root: a dedicated user (sysusers.d) in the groups that may read logs.
+User=loglens-helper
+Group=loglens-helper
+SupplementaryGroups=systemd-journal adm
+
+# Read-only, no capabilities, no network, nothing to write.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
+
+# Resource limits: a misbehaving client cannot exhaust the machine.
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=256

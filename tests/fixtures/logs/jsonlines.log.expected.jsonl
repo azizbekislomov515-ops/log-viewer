@@ -1,0 +1,34 @@
+{"fields": {"addr": ":8080", "caller": "server/main.go:42", "level": "info"}, "message": "server started", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:01.123456+00:00"}
+{"fields": {"caller": "db/pool.go:88", "duration": 2.31, "level": "warn", "query": "SELECT * FROM orders"}, "message": "slow query", "parsed": true, "parser": "json", "severity": "WARNING", "ts": "2026-11-17T22:50:02.500000+00:00"}
+{"fields": {"caller": "api/handler.go:120", "error": "context deadline exceeded", "level": "error", "stacktrace": "main.handler\n\t/app/api/handler.go:120", "status": 500}, "message": "request failed", "parsed": true, "parser": "json", "severity": "ERROR", "ts": "2026-11-17T22:50:03+00:00"}
+{"fields": {"key": "user:42", "level": "debug"}, "message": "cache miss", "parsed": true, "parser": "json", "severity": "DEBUG", "ts": "2026-11-17T22:50:04.123000+00:00"}
+{"fields": {"level": "ERROR", "provider": "stripe"}, "message": "payment provider unreachable", "parsed": true, "parser": "json", "severity": "ERROR", "ts": "2026-11-17T17:50:05+00:00"}
+{"fields": {"job": "nightly", "level": "INFO", "rows": 12345}, "message": "job finished", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:06+00:00"}
+{"fields": {"level": "dbug"}, "message": "verbose thing", "parsed": true, "parser": "json", "severity": "DEBUG", "ts": "2026-11-17T22:50:07+00:00"}
+{"fields": {"hostname": "web01", "level": 30, "name": "api", "pid": 123, "v": 0}, "message": "listening", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:08+00:00"}
+{"fields": {"hostname": "web01", "level": 50, "name": "api", "pid": 123, "v": 0}, "message": "unhandled rejection", "parsed": true, "parser": "json", "severity": "ERROR", "ts": "2026-11-17T22:50:09+00:00"}
+{"fields": {"hostname": "web01", "level": 60, "name": "api", "pid": 123, "v": 0}, "message": "fatal: out of memory", "parsed": true, "parser": "json", "severity": "CRITICAL", "ts": "2026-11-17T22:50:10+00:00"}
+{"fields": {"hostname": "pino-host", "level": 40, "pid": 7}, "message": "deprecated option used", "parsed": true, "parser": "json", "severity": "WARNING", "ts": "2026-11-17T22:50:11+00:00"}
+{"fields": {"hostname": "pino-host", "level": 20, "pid": 7}, "message": "debug detail", "parsed": true, "parser": "json", "severity": "DEBUG", "ts": "2026-11-17T22:50:12+00:00"}
+{"fields": {"ecs.version": "1.6.0", "level": "warn", "service.name": "orders"}, "message": "ECS formatted", "parsed": true, "parser": "json", "severity": "WARNING", "ts": "2026-11-17T22:50:13+00:00"}
+{"fields": {"level": "ERROR", "name": "django.request"}, "message": "Internal Server Error: /api/orders/", "parsed": true, "parser": "json", "severity": "ERROR", "ts": "2026-11-17T22:50:14.123000+00:00"}
+{"fields": {"level": "info", "logger": "auth", "user_id": 42}, "message": "user logged in", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:15.123456+00:00"}
+{"fields": {"OrderId": 42, "level": "Information"}, "message": "Processed order 42 in 12 ms", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:16+00:00"}
+{"fields": {"level": "Warning"}, "message": "Disk nearly full", "parsed": true, "parser": "json", "severity": "WARNING", "ts": "2026-11-17T22:50:17+00:00"}
+{"fields": {"level": "INFO", "request": {"method": "GET", "path": "/"}}, "message": "slog structured", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:18+00:00"}
+{"fields": {"level": "info"}, "message": "nanosecond epoch", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:19.123457+00:00"}
+{"fields": {"level": "info"}, "message": "microsecond epoch", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:20.123456+00:00"}
+{"fields": {"level": "info"}, "message": "epoch as string", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:21+00:00"}
+{"fields": {"level": "info"}, "message": "no timestamp at all", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "no level, no time", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"bad_timestamp": "yesterday at noon", "level": "info", "ts": "yesterday at noon"}, "message": "unparseable time", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"level": "super-loud"}, "message": "unknown level", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:24+00:00"}
+{"fields": {"level": "info"}, "message": "{\"nested\": \"message object\"}", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:25+00:00"}
+{"fields": {"level": "info", "ts": true}, "message": "boolean ts ignored", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"level": null}, "message": "null level", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:27+00:00"}
+{"fields": {"LEVEL": "error", "MSG": "wrong case keys"}, "message": "{\"LEVEL\":\"error\",\"MSG\":\"wrong case keys\"}", "parsed": true, "parser": "json", "severity": "ERROR", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {"level": "info", "x": " {padded} "}, "message": "no whitespace", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-17T22:50:29+00:00"}
+{"fields": {}, "message": "[\"not\",\"an\",\"object\"]", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "{\"level\":\"info\",\"msg\":\"truncated json", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "{not json at all}", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "{}", "parsed": true, "parser": "json", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}

@@ -1,0 +1,37 @@
+Nov 17 22:50:01 kali sshd[1234]: Server listening on 0.0.0.0 port 22.
+Nov 17 22:50:01 kali sshd[1234]: Server listening on :: port 22.
+Nov 17 22:50:05 kali sshd[1301]: Invalid user admin from 203.0.113.9 port 51234
+Nov 17 22:50:07 kali sshd[1301]: pam_unix(sshd:auth): check pass; user unknown
+Nov 17 22:50:07 kali sshd[1301]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=203.0.113.9
+Nov 17 22:50:09 kali sshd[1301]: Failed password for invalid user admin from 203.0.113.9 port 51234 ssh2
+Nov 17 22:50:11 kali sshd[1301]: Connection closed by invalid user admin 203.0.113.9 port 51234 [preauth]
+Nov 17 22:50:20 kali sshd[1310]: Failed password for root from 203.0.113.9 port 51300 ssh2
+Nov 17 22:50:22 kali sshd[1310]: error: maximum authentication attempts exceeded for root from 203.0.113.9 port 51300 ssh2 [preauth]
+Nov 17 22:50:22 kali sshd[1310]: Disconnecting authenticating user root 203.0.113.9 port 51300: Too many authentication failures [preauth]
+Nov 17 22:50:22 kali sshd[1310]: PAM 5 more authentication failures; logname= uid=0 euid=0 tty=ssh ruser= rhost=203.0.113.9  user=root
+Nov 17 22:51:00 kali sshd[1400]: Accepted publickey for azik from 192.168.1.10 port 40000 ssh2: ED25519 SHA256:Zx3r9Kq2mW8vN1bT4yH6uJ0pL5sD7fG9hA2cE4iO6k
+Nov 17 22:51:00 kali sshd[1400]: pam_unix(sshd:session): session opened for user azik(uid=1000) by (uid=0)
+Nov 17 22:51:00 kali systemd-logind[612]: New session 12 of user azik.
+Nov 17 22:52:30 kali sudo:     azik : TTY=pts/0 ; PWD=/home/azik ; USER=root ; COMMAND=/usr/bin/apt update
+Nov 17 22:52:30 kali sudo: pam_unix(sudo:session): session opened for user root(uid=0) by azik(uid=1000)
+Nov 17 22:52:41 kali sudo: pam_unix(sudo:session): session closed for user root
+Nov 17 22:53:10 kali sshd[1400]: Received disconnect from 192.168.1.10 port 40000:11: disconnected by user
+Nov 17 22:53:10 kali sshd[1400]: Disconnected from user azik 192.168.1.10 port 40000
+Nov 17 22:53:10 kali sshd[1400]: pam_unix(sshd:session): session closed for user azik
+Nov 17 22:54:00 kali sshd[1500]: Accepted password for deploy from 10.0.0.50 port 52000 ssh2
+Nov 17 22:54:30 kali sshd[1510]: Connection reset by 198.51.100.7 port 41000 [preauth]
+Nov 17 22:54:31 kali sshd[1511]: banner exchange: Connection from 198.51.100.8 port 41001: invalid format
+Nov 17 22:54:32 kali sshd[1512]: Did not receive identification string from 198.51.100.9 port 41002
+Nov 17 22:54:33 kali sshd[1513]: Received disconnect from 198.51.100.10 port 41003:11: Bye Bye [preauth]
+Nov 17 22:54:34 kali sshd[1513]: Disconnected from authenticating user root 198.51.100.10 port 41003 [preauth]
+Nov 17 22:54:35 kali sshd[1514]: Failed publickey for git from 2001:db8::77 port 60000 ssh2: RSA SHA256:abc
+Nov 17 22:54:36 kali sshd[1515]: Timeout before authentication for connection from 198.51.100.11 to 10.0.0.2, pid = 1515
+Nov 17 22:55:00 kali CRON[1600]: pam_unix(cron:session): session opened for user root(uid=0) by root(uid=0)
+2026-11-17T22:56:00.123456+05:00 kali sshd-session[1700]: Accepted publickey for azik from 192.168.1.10 port 40100 ssh2: ED25519 SHA256:Zx3r9Kq2
+2026-11-17T22:56:01.000000+05:00 kali sshd-session[1701]: Invalid user oracle from 203.0.113.12 port 33333
+Nov 17 22:57:00 kali sshd[1234]: Received signal 15; terminating.
+Nov 17 22:57:01 kali sshd[1800]: some new sshd message we do not know yet
+Nov 17 22:57:02 kali sshd[1801]: Accepted password for
+Nov 41 22:57:03 kali sshd[1802]: Invalid user x from 1.2.3.4 port 5
+sshd[1803]: Invalid user y from 1.2.3.5 port 6
+garbage line without any structure

@@ -1,0 +1,387 @@
+# Linux kernel messages (kern.log, dmesg, the journal's kernel transport, program "kernel" in
+# syslog). Messages may start with a "[12345.678901] " uptime stamp, so regexes use search.
+pack: kernel
+version: 1
+description: Kernel memory, disk, crash, firewall and hardware messages.
+example_source: file:/var/log/kern.log
+applies_to:
+  programs: [kernel]
+  paths: ["/var/log/kern.log*", "/var/log/dmesg*"]
+
+overview:
+  cards:
+    - {title: Blocked by the firewall (source), kind: top, field: src, when: {tags: [firewall]}}
+    - {title: Blocked ports, kind: top, field: dpt, when: {tags: [firewall]}}
+    - {title: Out-of-memory kills, kind: recent, when: {tags: [oom]}, columns: [process], warn_at: 1,
+       empty: No process was killed for memory.}
+    - {title: Disk and filesystem errors, kind: recent, when: {tags: [disk]}, warn_at: 1, empty: None.}
+    - {title: Crashing programs, kind: top, field: process, when: {tags: [crash]}}
+
+rules:
+  # ---------------------------------------------------------------- memory
+  - id: kernel.oom.cgroup_kill
+    title: "{{ process }} killed: memory limit reached"
+    match:
+      regex: 'Memory cgroup out of memory: Killed process (?P<pid>\d+) \((?P<process>[^)]+)\)'
+    template: >-
+      The kernel killed {{ process }} (PID {{ pid }}) because the container or service it runs in
+      used up its own memory limit; the machine itself still had memory.
+    action: Raise the memory limit of that container/service (docker --memory, MemoryMax=) or reduce what {{ process | shquote }} uses.
+    category: performance
+    tags: [oom]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [12345.678901] Memory cgroup out of memory: Killed process 4321 (java) total-vm:8123456kB, anon-rss:1012345kB, file-rss:0kB"
+        expect:
+          text: >-
+            The kernel killed java (PID 4321) because the container or service it runs in used up its
+            own memory limit; the machine itself still had memory.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [12345.678901] Out of memory: Killed process 4321 (java) total-vm:8123456kB, anon-rss:4012345kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:9000kB oom_score_adj:0"
+
+  - id: kernel.oom.killed
+    title: "Out of memory: {{ process }} killed"
+    match:
+      regex: 'Out of memory: Killed process (?P<pid>\d+) \((?P<process>[^)]+)\)(?:.*?anon-rss:(?P<rss_kb>\d+)kB)?'
+    template: >-
+      The machine ran out of memory, so the kernel killed {{ process }} (PID
+      {{ pid }}){% if rss_kb %}, which was using {{ (rss_kb | int * 1024) | filesizeformat }}{% endif %},
+      to keep the system running.
+    action: Find what used the memory (often {{ process | shquote }} itself); add RAM or swap, or limit that program's memory.
+    category: availability
+    tags: [oom]
+    severity_override: critical
+    references: ["https://www.kernel.org/doc/gorman/html/understand/understand016.html"]
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [12345.678901] Out of memory: Killed process 4321 (java) total-vm:8123456kB, anon-rss:4012345kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:9000kB oom_score_adj:0"
+        expect:
+          title: "Out of memory: java killed"
+          text: >-
+            The machine ran out of memory, so the kernel killed java (PID 4321), which was using
+            4.1 GB, to keep the system running.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [12345.678000] java invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0"
+
+  - id: kernel.oom.invoked
+    title: "Memory exhausted (triggered by {{ process }})"
+    match:
+      regex: (?<!\S)(?P<process>\S+) invoked oom-killer
+    template: Memory ran out while {{ process }} was asking for more; the kernel is about to kill a process to free memory (details follow).
+    category: availability
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [12345.678000] java invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0"
+        expect:
+          text: >-
+            Memory ran out while java was asking for more; the kernel is about to kill a process to
+            free memory (details follow).
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [12345.678901] Out of memory: Killed process 4321 (java) total-vm:8123456kB, anon-rss:4012345kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:9000kB oom_score_adj:0"
+
+  # ---------------------------------------------------------------- crashes
+  - id: kernel.crash.segfault
+    title: "{{ process }} crashed (segfault)"
+    match:
+      regex: '(?<!\S)(?P<process>[^\s\[]+)\[(?P<pid>\d+)\]: segfault at \S+ ip \S+ sp \S+ error \d+(?: in (?P<lib>[^\[\s]+))?'
+    template: >-
+      {{ process }} (PID {{ pid }}) crashed because it accessed memory it should not (segmentation
+      fault){% if lib %} inside {{ lib }}{% endif %}.
+    cause: A bug in the program or a library; repeated crashes in different programs can also mean faulty RAM.
+    action: Update the package that provides {{ process | shquote }}; if many different programs segfault, test the RAM (memtest86+).
+    category: availability
+    tags: [crash]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [ 4567.123456] php-fpm8.2[2345]: segfault at 0 ip 000055d4c1f2a3b0 sp 00007ffd2c0e1a20 error 4 in php-fpm8.2[55d4c1e00000+3c0000]"
+        expect:
+          text: >-
+            php-fpm8.2 (PID 2345) crashed because it accessed memory it should not (segmentation
+            fault) inside php-fpm8.2.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [ 4567.123456] traps: node[3456] general protection fault ip:55d4c1f2a3b0 sp:7ffd2c0e1a20 error:0 in node[55d4c1e00000+3c0000]"
+
+  - id: kernel.crash.general_protection
+    title: "{{ process }} crashed (protection fault)"
+    match:
+      regex: 'traps: (?P<process>[^\s\[]+)\[(?P<pid>\d+)\] (?P<kind>general protection fault|trap invalid opcode|trap divide error)'
+    template: "{{ process }} (PID {{ pid }}) was stopped by the kernel after a {{ kind }}."
+    cause: A program bug, or a binary built for a newer CPU than this one (invalid opcode).
+    action: Update {{ process | shquote }}; for "invalid opcode", check that the program supports this CPU.
+    category: availability
+    tags: [crash]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [ 4567.123456] traps: node[3456] general protection fault ip:55d4c1f2a3b0 sp:7ffd2c0e1a20 error:0 in node[55d4c1e00000+3c0000]"
+        expect:
+          text: node (PID 3456) was stopped by the kernel after a general protection fault.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [ 4567.123456] php-fpm8.2[2345]: segfault at 0 ip 000055d4c1f2a3b0 sp 00007ffd2c0e1a20 error 4 in php-fpm8.2[55d4c1e00000+3c0000]"
+
+  - id: kernel.hang.blocked_task
+    title: "{{ process }} stuck for {{ seconds }} s"
+    match:
+      regex: INFO:\s+task (?P<process>\S+?):(?P<pid>\d+) blocked for more than (?P<seconds>\d+) seconds
+    template: "{{ process }} (PID {{ pid }}) has been stuck waiting for more than {{ seconds }} seconds, usually for a disk or network filesystem."
+    cause: A very slow or failing disk, a hung NFS/CIFS server, or heavy I/O load.
+    action: Check disk health and load ("iostat -x 1", "dmesg" for disk errors) and any network mounts.
+    category: performance
+    tags: [disk]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [ 7200.000001] INFO: task jbd2/sda1-8:312 blocked for more than 120 seconds."
+        expect:
+          text: >-
+            jbd2/sda1-8 (PID 312) has been stuck waiting for more than 120 seconds, usually for a disk
+            or network filesystem.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [ 7200.000001] watchdog: BUG: soft lockup - CPU#2 stuck for 23s! [kworker/2:1:1234]"
+
+  - id: kernel.hang.soft_lockup
+    title: "CPU {{ cpu }} stuck for {{ seconds }} s"
+    match:
+      regex: 'soft lockup - CPU#(?P<cpu>\d+) stuck for (?P<seconds>\d+)s! \[(?P<process>[^\]]+)\]'
+    template: CPU {{ cpu }} was busy in the kernel for {{ seconds }} s without letting anything else run (running {{ process }}).
+    cause: A kernel or driver bug, or an overloaded virtual machine host stealing CPU time.
+    action: If it repeats, update the kernel; on a VM, check the host's load.
+    category: performance
+    severity_override: critical
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [ 7200.000001] watchdog: BUG: soft lockup - CPU#2 stuck for 23s! [kworker/2:1:1234]"
+        expect:
+          text: CPU 2 was busy in the kernel for 23 s without letting anything else run (running kworker/2:1:1234).
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [ 7200.000001] INFO: task jbd2/sda1-8:312 blocked for more than 120 seconds."
+
+  # ---------------------------------------------------------------- disks and filesystems
+  - id: kernel.disk.io_error
+    title: "Disk I/O error on {{ device }}"
+    match:
+      regex: I/O error, dev (?P<device>\w+), sector (?P<sector>\d+)
+    template: The kernel failed to read from or write to disk {{ device }} (sector {{ sector }}). Data in that area may be lost.
+    cause: A failing disk, a bad cable or connector, or a disconnected USB/virtual disk.
+    action: Check the disk's health ("sudo smartctl -a /dev/{{ device | shquote }}") and back up important data now.
+    category: availability
+    tags: [disk]
+    severity_override: critical
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [ 8000.000001] blk_update_request: I/O error, dev sda, sector 123456789 op 0x0:(READ) flags 0x0 phys_seg 1 prio class 0"
+        expect:
+          text: >-
+            The kernel failed to read from or write to disk sda (sector 123456789). Data in that area
+            may be lost.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [ 8000.000001] ata1.00: exception Emask 0x0 SAct 0x0 SErr 0x0 action 0x0"
+
+  - id: kernel.disk.ata_error
+    title: "Disk link problem on ata{{ port }}"
+    match:
+      regex: 'ata(?P<port>\d+)(?:\.\d+)?: (?:exception Emask|failed command|SError:|hard resetting link|link is slow to respond)'
+    template: The disk controller had trouble talking to the disk on port ata{{ port }} and may have reset the connection.
+    cause: A loose or bad SATA cable, a weak power supply, or a disk that is starting to fail.
+    action: If this repeats, reseat/replace the cable and check the disk with "sudo smartctl -a".
+    category: availability
+    tags: [disk]
+    severity_override: error
+    confidence: 0.7
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [ 8000.000001] ata1.00: exception Emask 0x0 SAct 0x0 SErr 0x0 action 0x0"
+        expect:
+          text: The disk controller had trouble talking to the disk on port ata1 and may have reset the connection.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [ 8000.000001] ata1: SATA link up 6.0 Gbps (SStatus 133 SControl 300)"
+
+  - id: kernel.fs.read_only
+    title: "Filesystem {{ device }} switched to read-only"
+    match:
+      regex: '(?:EXT4-fs|EXT3-fs|BTRFS|XFS) (?:\w+ )?\(?(?:device )?(?P<device>[\w./-]+)\)?:? .*?(?:Remounting filesystem read-only|forced to read-only|shutting down filesystem)'
+    template: The filesystem on {{ device }} hit an error and was made read-only to protect the data; programs can no longer write there.
+    action: Back up what you can, then run a filesystem check (fsck) on {{ device | shquote }} from a rescue boot, and check the disk's health.
+    category: availability
+    tags: [disk]
+    severity_override: critical
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [ 8000.000001] EXT4-fs (sda1): Remounting filesystem read-only"
+        expect:
+          text: >-
+            The filesystem on sda1 hit an error and was made read-only to protect the data; programs
+            can no longer write there.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [ 8000.000001] EXT4-fs (sda1): mounted filesystem with ordered data mode. Quota mode: none."
+
+  - id: kernel.fs.error
+    title: "Filesystem error on {{ device }}"
+    match:
+      regex: '(?:EXT4-fs error \(device (?P<device>[^)]+)\)|XFS \((?P<xfs>[^)]+)\): (?:Corruption|metadata I/O error))'
+    template: The kernel found damaged data structures on the filesystem {{ device or xfs }}.
+    cause: An unclean shutdown, a failing disk, or (rarely) a kernel bug.
+    action: Check the disk's health and schedule a filesystem check (fsck / xfs_repair) on {{ (device or xfs) | shquote }} while it is unmounted.
+    category: availability
+    tags: [disk]
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [ 8000.000001] EXT4-fs error (device sda1): ext4_find_entry:1455: inode #2: comm ls: reading directory lblock 0"
+        expect:
+          text: The kernel found damaged data structures on the filesystem sda1.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [ 8000.000001] EXT4-fs (sda1): mounted filesystem with ordered data mode. Quota mode: none."
+
+  # ---------------------------------------------------------------- firewall and network
+  - id: kernel.firewall.ufw_block
+    title: "Firewall blocked {{ src }}{% if dpt %} -> port {{ dpt }}{% endif %}"
+    match:
+      regex: '\[UFW BLOCK\] IN=(?P<iface>\S*) .*?SRC=(?P<src>\S+) DST=(?P<dst>\S+).*?PROTO=(?P<proto>\w+)(?: SPT=\d+ DPT=(?P<dpt>\d+))?'
+    template: >-
+      The firewall (UFW) blocked a {{ proto }} connection from {{ src }} to {{ dst }}{% if dpt %} port
+      {{ dpt }}{% endif %}{% if iface %} on {{ iface }}{% endif %}.
+    cause: Usually internet scanners knocking on closed ports; nothing got through.
+    action: Nothing to do unless {{ src | shquote }} is one of your own machines that should be allowed; then add a "ufw allow" rule.
+    category: security
+    tags: [firewall]
+    severity_override: info
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [12345.678901] [UFW BLOCK] IN=eth0 OUT= MAC=aa:bb:cc:dd:ee:ff SRC=203.0.113.5 DST=10.0.0.2 LEN=60 TOS=0x00 PREC=0x00 TTL=50 ID=1 DF PROTO=TCP SPT=4444 DPT=22 WINDOW=1 RES=0x00 SYN URGP=0"
+        expect:
+          title: Firewall blocked 203.0.113.5 -> port 22
+          text: The firewall (UFW) blocked a TCP connection from 203.0.113.5 to 10.0.0.2 port 22 on eth0.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [12345.678901] [UFW ALLOW] IN=eth0 OUT= MAC=aa:bb SRC=10.0.0.5 DST=10.0.0.2 LEN=60 PROTO=TCP SPT=4444 DPT=22 SYN URGP=0"
+
+  - id: kernel.firewall.drop
+    title: "Packet dropped from {{ src }}"
+    match:
+      regex: '(?<![^\s\]])(?P<prefix>[^\s\]]*(?i:drop|deny|reject|block)\S*)\s+IN=(?P<iface>\S*) OUT=\S* .*?SRC=(?P<src>\S+) DST=(?P<dst>\S+).*?PROTO=(?P<proto>\w+)(?: SPT=\d+ DPT=(?P<dpt>\d+))?'
+    template: >-
+      A firewall rule ({{ prefix | trim }}) dropped a {{ proto }} packet from {{ src }} to
+      {{ dst }}{% if dpt %} port {{ dpt }}{% endif %}.
+    action: Nothing to do if this traffic should be blocked; otherwise adjust the iptables/nftables rule that logs "{{ prefix | trim | shquote }}".
+    category: security
+    tags: [firewall]
+    severity_override: info
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [12345.678901] IPTABLES-DROP: IN=eth0 OUT= MAC=aa:bb SRC=198.51.100.7 DST=10.0.0.2 LEN=40 TOS=0x00 PREC=0x00 TTL=240 ID=54321 PROTO=TCP SPT=40000 DPT=3389 WINDOW=1024 RES=0x00 SYN URGP=0"
+        expect:
+          text: A firewall rule (IPTABLES-DROP:) dropped a TCP packet from 198.51.100.7 to 10.0.0.2 port 3389.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [12345.678901] [UFW ALLOW] IN=eth0 OUT= MAC=aa:bb SRC=10.0.0.5 DST=10.0.0.2 LEN=60 PROTO=TCP SPT=4444 DPT=22 SYN URGP=0"
+
+  - id: kernel.net.syn_flood
+    title: "Possible SYN flood on port {{ port }}"
+    match:
+      regex: Possible SYN flooding on port (?P<port>[^.\s]+)\. Sending cookies
+    template: The server got a burst of half-open connections on port {{ port }} and switched to SYN cookies to keep accepting real clients.
+    cause: A SYN-flood attack, or simply a very busy service whose listen backlog is too small.
+    action: Check "ss -s" and the traffic sources; if the load is legitimate, raise the service's backlog and net.core.somaxconn.
+    category: security
+    severity_override: warning
+    confidence: 0.7
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [12345.678901] TCP: request_sock_TCP: Possible SYN flooding on port 443. Sending cookies.  Check SNMP counters."
+        expect:
+          text: >-
+            The server got a burst of half-open connections on port 443 and switched to SYN cookies to
+            keep accepting real clients.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [12345.678901] nf_conntrack: nf_conntrack: table full, dropping packet"
+
+  - id: kernel.net.conntrack_full
+    title: Connection tracking table full
+    match:
+      regex: nf_conntrack:.*table full, dropping packet
+    template: The firewall's connection-tracking table is full, so the kernel is dropping new connections.
+    cause: Very many simultaneous connections (busy proxy/NAT, Docker host, or an attack).
+    action: Raise net.netfilter.nf_conntrack_max (sysctl) and check what creates so many connections ("conntrack -C").
+    category: performance
+    severity_override: error
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [12345.678901] nf_conntrack: nf_conntrack: table full, dropping packet"
+        expect:
+          text: The firewall's connection-tracking table is full, so the kernel is dropping new connections.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [12345.678901] TCP: request_sock_TCP: Possible SYN flooding on port 443. Sending cookies.  Check SNMP counters."
+
+  - id: kernel.net.link_down
+    title: "Network link down: {{ iface }}"
+    match:
+      regex: '(?<![\w.-])(?P<iface>[\w.-]+): (?:NIC )?Link is Down'
+    template: The network cable or connection on {{ iface }} went down; the machine lost connectivity on that interface.
+    action: Check the cable, switch port, or the VM's virtual network.
+    category: availability
+    severity_override: warning
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [12345.678901] e1000e 0000:00:1f.6 eno1: NIC Link is Down"
+        expect:
+          text: >-
+            The network cable or connection on eno1 went down; the machine lost connectivity on that
+            interface.
+    counter_examples:
+      - "Nov 18 10:00:05 kali kernel: [12345.678901] e1000e 0000:00:1f.6 eno1: NIC Link is Up 1000 Mbps Full Duplex, Flow Control: Rx/Tx"
+
+  - id: kernel.net.link_up
+    title: "Network link up: {{ iface }}"
+    match:
+      regex: '(?<![\w.-])(?P<iface>[\w.-]+): (?:NIC )?Link is Up(?: (?:-\s*)?(?P<speed>\d+\s*[MG]bps))?'
+    template: The network connection on {{ iface }} is up{% if speed %} at {{ speed }}{% endif %}.
+    category: availability
+    severity_override: info
+    examples:
+      - line: "Nov 18 10:00:05 kali kernel: [12345.678901] e1000e 0000:00:1f.6 eno1: NIC Link is Up 1000 Mbps Full Duplex, Flow Control: Rx/Tx"
+        expect:
+          text: The network connection on eno1 is up at 1000 Mbps.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [12345.678901] e1000e 0000:00:1f.6 eno1: NIC Link is Down"
+
+  # ---------------------------------------------------------------- hardware and security modules
+  - id: kernel.hw.mce
+    title: Hardware error reported
+    match:
+      regex: 'mce: \[Hardware Error\]'
+    template: The CPU reported a hardware error (Machine Check). This points to faulty RAM, CPU, or overheating, not software.
+    action: Install rasdaemon or mcelog for details; run a memory test; check temperatures and the vendor's firmware updates.
+    category: availability
+    tags: [hardware]
+    severity_override: critical
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [12345.678901] mce: [Hardware Error]: Machine check events logged"
+        expect:
+          text: >-
+            The CPU reported a hardware error (Machine Check). This points to faulty RAM, CPU, or
+            overheating, not software.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [12345.678901] CPU2: Package temperature above threshold, cpu clock throttled (total events = 5)"
+
+  - id: kernel.hw.thermal_throttle
+    title: "CPU {{ cpu }} overheating"
+    match:
+      regex: 'CPU(?P<cpu>\d+): (?:Core|Package) temperature above threshold, cpu clock throttled'
+    template: CPU {{ cpu }} got too hot and was slowed down to protect itself; everything on the machine runs slower meanwhile.
+    action: Check cooling (fans, dust, airflow) and sustained load ("sensors", "top").
+    category: performance
+    severity_override: warning
+    examples:
+      - line: "Nov 18 10:00:00 kali kernel: [12345.678901] CPU2: Package temperature above threshold, cpu clock throttled (total events = 5)"
+        expect:
+          text: >-
+            CPU 2 got too hot and was slowed down to protect itself; everything on the machine runs
+            slower meanwhile.
+    counter_examples:
+      - "Nov 18 10:00:00 kali kernel: [12345.678901] CPU2: Package temperature/speed normal"
+
+  - id: kernel.security.apparmor_denied
+    title: "AppArmor blocked {{ profile }}"
+    match:
+      regex: 'apparmor="DENIED" operation="(?P<operation>[^"]+)".*?profile="(?P<profile>[^"]+)"(?:.*?name="(?P<name>[^"]+)")?'
+    template: >-
+      AppArmor stopped the program confined by profile {{ profile }} from doing "{{ operation }}"{% if name %}
+      on {{ name }}{% endif %}.
+    cause: The program tried something outside its security profile; usually a legitimate new feature or path, occasionally an attack.
+    action: If the program needs this, extend its profile (aa-logprof); if not, the block is doing its job.
+    category: security
+    severity_override: warning
+    examples:
+      - line: 'Nov 18 10:00:00 kali kernel: [12345.678901] audit: type=1400 audit(1700000000.123:45): apparmor="DENIED" operation="open" class="file" profile="/usr/sbin/named" name="/etc/bind/secret.key" pid=1234 comm="named" requested_mask="r" denied_mask="r" fsuid=113 ouid=0'
+        expect:
+          text: >-
+            AppArmor stopped the program confined by profile /usr/sbin/named from doing "open" on
+            /etc/bind/secret.key.
+    counter_examples:
+      - 'Nov 18 10:00:00 kali kernel: [12345.678901] audit: type=1400 audit(1700000000.123:45): apparmor="STATUS" operation="profile_load" profile="unconfined" name="/usr/sbin/named" pid=1234 comm="apparmor_parser"'

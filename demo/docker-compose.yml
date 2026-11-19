@@ -1,0 +1,64 @@
+# LogLens demo stack: realistic proxy traffic, ACL denials, DNS failures, a fake infection
+# (the harmless EICAR test string), failing antivirus updates and a crash-looping service.
+# Everything builds from alpine and runs offline. See docs/DEMO.md.
+#
+#   docker compose -f demo/docker-compose.yml -p loglens-demo up -d --build
+#   docker compose -f demo/docker-compose.yml -p loglens-demo down -v
+name: loglens-demo
+
+services:
+  web:
+    build: ./web
+    image: loglens-demo/nginx  # image names tell LogLens which parser to use
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 5s
+      retries: 5
+
+  squid:
+    build: ./squid
+    image: loglens-demo/squid
+    depends_on:
+      web:
+        condition: service_healthy
+
+  traffic:
+    build: ./traffic
+    image: loglens-demo/traffic
+    environment:
+      http_proxy: http://squid:3128
+      https_proxy: http://squid:3128
+    depends_on: [squid]
+    deploy:
+      replicas: 2
+
+  clamav:
+    build: ./clamav
+    image: loglens-demo/clamav
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "1"]
+      interval: 5s
+      retries: 10
+    volumes:
+      - scan:/scan
+
+  scanner:
+    image: loglens-demo/clamav
+    entrypoint: ["/usr/local/bin/scan-loop.sh"]
+    volumes:
+      - scan:/scan
+    depends_on:
+      clamav:
+        condition: service_healthy
+
+  flaky:
+    image: alpine:latest
+    restart: always
+    command:
+      - sh
+      - -c
+      - 'echo "worker started, connecting to db:5432"; sleep 25;
+         echo "fatal: lost connection to db:5432 (connection refused)" >&2; exit 1'
+
+volumes:
+  scan:

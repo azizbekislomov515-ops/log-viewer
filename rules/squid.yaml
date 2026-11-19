@@ -1,0 +1,709 @@
+# Squid proxy: access.log (native format) and cache.log.
+#
+# Access-log fields come from the squid parser: client_ip, cache_result, status, method,
+# url, domain, user, elapsed_ms, bytes, hierarchy, peer. Cache-log rules match the message
+# after the "kid1| " prefix.
+pack: squid
+version: 1
+description: Squid access and cache log explanations.
+example_source: file:/var/log/squid/access.log
+applies_to:
+  parsers: [squid]
+  units: [squid.service, squid3.service]
+  paths: ["/var/log/squid/*", "/var/log/squid3/*"]
+  images: ["*squid*"]
+  services: ["*squid*"]
+
+overview:
+  key_fields: {client_ip: client, domain: domain}
+  thresholds: {error_rate: 0.10}
+  cards:
+    - {title: Top clients, kind: top, field: client_ip}
+    - {title: Top domains, kind: top, field: domain}
+    - {title: Blocked sites, kind: top, field: domain, when: {tags: [denial]}, empty: Nothing was blocked.}
+    - {title: Sites that failed, kind: top, field: domain, when: {tags: [upstream]}, empty: Every site answered.}
+    - {title: Served from cache, kind: count, when: {tags: [cache_hit]}}
+    - {title: Proxy errors, kind: recent, when: {min_severity: error}, limit: 5, empty: No errors.}
+
+rules:
+  # ---------------------------------------------------------------- access.log
+  - id: squid.access.auth_required
+    title: "Proxy login required: {{ client_ip }}"
+    match:
+      fields: {cache_result: TCP_DENIED, status: 407}
+    extract: [client_ip, url]
+    optional: [domain]
+    template: >-
+      Squid asked {{ client_ip }} to log in before fetching {{ domain or url }}.
+      Browsers normally do this once and then retry with credentials.
+    cause: The proxy requires authentication (auth_param / proxy_auth ACL) and the request had none.
+    action: >-
+      Ignore a single 407. If {{ client_ip | shquote }} keeps getting 407s, its proxy username or
+      password is wrong or missing.
+    category: security
+    tags: [auth]
+    severity_override: info
+    references: ["https://wiki.squid-cache.org/Features/Authentication"]
+    examples:
+      - line: "1794955803.912      1 10.0.0.12 TCP_DENIED/407 4045 GET http://neverssl.com/ - HIER_NONE/- text/html"
+        expect:
+          title: "Proxy login required: 10.0.0.12"
+          text: >-
+            Squid asked 10.0.0.12 to log in before fetching neverssl.com. Browsers normally
+            do this once and then retry with credentials.
+          severity: info
+    counter_examples:
+      - "1794955801.456      0 10.0.0.5 TCP_DENIED/403 3922 CONNECT facebook.com:443 - HIER_NONE/- text/html"
+
+  - id: squid.access.denied_connect
+    title: "Blocked HTTPS site: {{ domain }}"
+    match:
+      fields: {cache_result: TCP_DENIED, status: 403, method: CONNECT}
+    extract: [client_ip, domain]
+    optional: [user]
+    template: >-
+      Squid blocked {{ client_ip }}{% if user %} (user {{ user }}){% endif %} from opening a
+      secure connection to {{ domain }}.
+    cause: An "http_access deny" rule in squid.conf matched this site or this client (for example a blocked-sites ACL).
+    action: >-
+      Nothing to do if {{ domain | shquote }} is meant to be blocked. Otherwise find the acl that lists
+      {{ domain | shquote }} (grep -nF {{ domain | shquote }} /etc/squid/squid.conf /etc/squid/*.acl) and adjust it.
+    category: security
+    tags: [denial]
+    severity_override: notice
+    references: ["man:squid(8)", "https://wiki.squid-cache.org/SquidFaq/SquidAcl"]
+    examples:
+      - line: "1794955801.456      0 10.0.0.5 TCP_DENIED/403 3922 CONNECT facebook.com:443 - HIER_NONE/- text/html"
+        expect:
+          title: "Blocked HTTPS site: facebook.com"
+          text: Squid blocked 10.0.0.5 from opening a secure connection to facebook.com.
+          category: security
+      - line: "1794955804.777      0 10.0.0.13 TCP_DENIED/403 3887 CONNECT www.tiktok.com:443 bob HIER_NONE/- text/html"
+        expect:
+          text: Squid blocked 10.0.0.13 (user bob) from opening a secure connection to www.tiktok.com.
+    counter_examples:
+      - "1794955807.900      0 10.0.0.31 TCP_DENIED/403 3902 GET http://ads.doubleclick.net/pixel.gif - HIER_NONE/- text/html"
+
+  - id: squid.access.denied
+    title: "Blocked request: {{ domain or url }}"
+    match:
+      fields: {cache_result: TCP_DENIED, status: 403}
+    extract: [client_ip, method, url]
+    optional: [domain, user]
+    template: >-
+      Squid blocked {{ client_ip }}{% if user %} (user {{ user }}){% endif %} from loading
+      {{ url }}.
+    cause: An "http_access deny" rule in squid.conf matched this address, domain or client.
+    action: >-
+      Nothing to do if this is intended (ads, blocked sites). Otherwise check which acl in
+      /etc/squid/squid.conf matches {{ (domain or url) | shquote }}.
+    category: security
+    tags: [denial]
+    severity_override: notice
+    references: ["https://wiki.squid-cache.org/SquidFaq/SquidAcl"]
+    examples:
+      - line: "1794955807.900      0 10.0.0.31 TCP_DENIED/403 3902 GET http://ads.doubleclick.net/pixel.gif - HIER_NONE/- text/html"
+        expect:
+          title: "Blocked request: ads.doubleclick.net"
+          text: Squid blocked 10.0.0.31 from loading http://ads.doubleclick.net/pixel.gif.
+    counter_examples:
+      - "1794955803.912      1 10.0.0.12 TCP_DENIED/407 4045 GET http://neverssl.com/ - HIER_NONE/- text/html"
+
+  - id: squid.access.invalid_request
+    title: Unreadable request from {{ client_ip }}
+    match:
+      fields: {cache_result: NONE_NONE, status: 400}
+    extract: [client_ip]
+    template: >-
+      Squid received something from {{ client_ip }} that is not a valid proxy request and
+      rejected it.
+    cause: >-
+      Usually a program talking plain HTTPS or another protocol to the proxy port, or a client
+      sending web requests to Squid without being set up to use a proxy.
+    action: Check how {{ client_ip | shquote }} is configured to use the proxy (proxy host, port and protocol).
+    category: configuration
+    severity_override: warning
+    confidence: 0.7
+    examples:
+      - line: "1794955806.000      0 10.0.0.21 NONE_NONE/400 3812 NONE error:invalid-request - HIER_NONE/- text/html"
+        expect:
+          text: >-
+            Squid received something from 10.0.0.21 that is not a valid proxy request and
+            rejected it.
+    counter_examples:
+      - "1794955801.123    245 10.0.0.5 TCP_MISS/200 5123 GET http://example.com/index.html - HIER_DIRECT/93.184.216.34 text/html"
+
+  - id: squid.access.tunnel
+    title: "HTTPS tunnel: {{ client_ip }} -> {{ domain }}"
+    match:
+      fields: {cache_result: TCP_TUNNEL}
+    extract: [client_ip, domain, elapsed_ms, bytes]
+    template: >-
+      {{ client_ip }} opened an encrypted connection to {{ domain }} through the proxy. It lasted
+      {{ (elapsed_ms / 1000) | round(1) }} s and carried {{ bytes | filesizeformat }}; Squid
+      cannot see or cache what was inside.
+    category: info
+    examples:
+      - line: "1794955802.317  60012 10.0.0.9 TCP_TUNNEL/200 48213 CONNECT api.github.com:443 - HIER_DIRECT/140.82.121.6 -"
+        expect:
+          title: "HTTPS tunnel: 10.0.0.9 -> api.github.com"
+          text: >-
+            10.0.0.9 opened an encrypted connection to api.github.com through the proxy. It lasted
+            60.0 s and carried 48.2 kB; Squid cannot see or cache what was inside.
+          severity: info
+    counter_examples:
+      - "1794955801.456      0 10.0.0.5 TCP_DENIED/403 3922 CONNECT facebook.com:443 - HIER_NONE/- text/html"
+
+  - id: squid.access.no_route
+    title: "Could not reach {{ domain }}"
+    match:
+      fields: {status: 503, hierarchy: HIER_NONE}
+    extract: [client_ip, domain]
+    template: >-
+      Squid could not connect to {{ domain }} at all for {{ client_ip }}, so it returned an
+      error page (503).
+    cause: The name {{ domain }} did not resolve (DNS failure), or every address of the server refused or timed out.
+    action: >-
+      On the proxy host, run "getent hosts {{ domain | shquote }}" and "curl -sI http://{{ domain | shquote }}/".
+      If DNS fails, check dns_nameservers in squid.conf and /etc/resolv.conf.
+    category: availability
+    tags: [upstream]
+    severity_override: error
+    confidence: 0.6
+    examples:
+      - line: "1794955809.555      3 10.0.0.40 TCP_MISS/503 4100 GET http://nxdomain.example.com/ - HIER_NONE/- text/html"
+        expect:
+          text: >-
+            Squid could not connect to nxdomain.example.com at all for 10.0.0.40, so it returned
+            an error page (503).
+    counter_examples:
+      - "1794955809.555    911 10.0.0.40 TCP_MISS/503 4100 GET http://down.example.com/ - HIER_DIRECT/203.0.113.99 text/html"
+
+  - id: squid.access.aborted
+    title: "Client gave up: {{ domain or url }}"
+    match:
+      field: cache_result
+      regex: _ABORTED$
+    extract: [client_ip, url, elapsed_ms]
+    optional: [domain]
+    template: >-
+      {{ client_ip }} stopped waiting for {{ url }} after {{ (elapsed_ms / 1000) | round(1) }} s,
+      before the download finished.
+    cause: The user closed the page or cancelled the download, or the client timed out on a slow server.
+    action: >-
+      Nothing to do for occasional aborts. Many aborts to {% if domain %}{{ domain | shquote }}{% else %}the same site{% endif %} point to a
+      slow or overloaded web server.
+    category: performance
+    severity_override: info
+    confidence: 0.7
+    examples:
+      - line: "1794955806.611  30001 10.0.0.9 TCP_MISS_ABORTED/000 0 GET http://slow.example.com/big.iso - HIER_DIRECT/198.51.100.7 -"
+        expect:
+          text: >-
+            10.0.0.9 stopped waiting for http://slow.example.com/big.iso after 30.0 s, before the
+            download finished.
+    counter_examples:
+      - "1794955801.123    245 10.0.0.5 TCP_MISS/200 5123 GET http://example.com/index.html - HIER_DIRECT/93.184.216.34 text/html"
+
+  - id: squid.access.gateway_timeout
+    title: "Timed out: {{ domain }}"
+    match:
+      fields: {status: 504}
+    extract: [client_ip, domain, elapsed_ms]
+    template: >-
+      {{ domain }} did not answer in time, so Squid gave {{ client_ip }} a timeout error (504)
+      after {{ (elapsed_ms / 1000) | round(1) }} s.
+    cause: The web server or the network path to it is slow or down.
+    action: Check whether {{ domain | shquote }} is reachable from the proxy host; if many sites time out, check the proxy's internet link.
+    category: availability
+    tags: [upstream]
+    severity_override: error
+    examples:
+      - line: "1794955809.555  60001 10.0.0.40 TCP_MISS/504 4100 GET http://slow.example.com/ - HIER_DIRECT/203.0.113.99 text/html"
+        expect:
+          text: >-
+            slow.example.com did not answer in time, so Squid gave 10.0.0.40 a timeout error (504)
+            after 60.0 s.
+    counter_examples:
+      - "1794955809.555    911 10.0.0.40 TCP_MISS/503 4100 GET http://down.example.com/ - HIER_DIRECT/203.0.113.99 text/html"
+
+  - id: squid.access.upstream_error
+    title: "Server error from {{ domain }} ({{ status }})"
+    match:
+      field: status
+      regex: ^5\d\d$
+    extract: [client_ip, domain, status]
+    optional: [peer]
+    template: >-
+      Squid reached {{ domain }}{% if peer %} ({{ peer }}){% endif %} for {{ client_ip }}, but
+      the server answered with error {{ status }} or an invalid response.
+    cause: >-
+      {% if status == 502 %}The web server sent a broken reply or closed the connection
+      early.{% elif status == 503 %}The web server is overloaded or down for
+      maintenance.{% else %}The web server hit an internal error.{% endif %}
+    action: >-
+      This is a problem on {{ domain | shquote }}'s side, not the proxy's. If {{ domain | shquote }} is one of your own
+      servers, check its logs.
+    category: availability
+    tags: [upstream]
+    severity_override: error
+    examples:
+      - line: "1794955805.020   1523 10.0.0.5 TCP_MISS/502 3990 GET http://intranet.local/health - HIER_DIRECT/10.0.5.20 text/html"
+        expect:
+          title: "Server error from intranet.local (502)"
+          text: >-
+            Squid reached intranet.local (10.0.5.20) for 10.0.0.5, but the server answered with
+            error 502 or an invalid response.
+          cause: The web server sent a broken reply or closed the connection early.
+      - line: "1794955809.555    911 10.0.0.40 TCP_MISS/503 4100 GET http://down.example.com/ - HIER_DIRECT/203.0.113.99 text/html"
+        expect:
+          text: >-
+            Squid reached down.example.com (203.0.113.99) for 10.0.0.40, but the server answered
+            with error 503 or an invalid response.
+          cause: The web server is overloaded or down for maintenance.
+    counter_examples:
+      - "1794955808.123     77 10.0.0.31 TCP_MISS/404 512 GET http://example.com/missing - HIER_DIRECT/93.184.216.34 text/html"
+
+  - id: squid.access.not_found
+    title: "Page not found on {{ domain }}"
+    match:
+      fields: {status: 404}
+    extract: [client_ip, url, domain]
+    template: "{{ domain }} told {{ client_ip }} that {{ url }} does not exist (404)."
+    cause: A wrong or outdated link, or a deleted page. The proxy only passed the answer on.
+    category: info
+    severity_override: info
+    examples:
+      - line: "1794955808.123     77 10.0.0.31 TCP_MISS/404 512 GET http://example.com/missing - HIER_DIRECT/93.184.216.34 text/html"
+        expect:
+          text: example.com told 10.0.0.31 that http://example.com/missing does not exist (404).
+    counter_examples:
+      - "1794955801.123    245 10.0.0.5 TCP_MISS/200 5123 GET http://example.com/index.html - HIER_DIRECT/93.184.216.34 text/html"
+
+  - id: squid.access.revalidated
+    title: "Cache revalidated: {{ domain }}"
+    match:
+      field: cache_result
+      regex: ^TCP_REFRESH_
+    extract: [client_ip, url, cache_result]
+    optional: [domain]
+    template: >-
+      Squid had {{ url }} cached and checked with {{ domain or "the server" }} whether it was still
+      current {% if "UNMODIFIED" in cache_result %}(it was, so the cached copy was used){% else %}(it
+      had changed, so a fresh copy was downloaded){% endif %}.
+    category: performance
+    tags: [cache_hit]
+    severity_override: info
+    examples:
+      - line: "1794955805.399     95 10.0.0.7 TCP_REFRESH_UNMODIFIED/200 22541 GET http://security.debian.org/debian-security/dists/bookworm-security/InRelease - HIER_DIRECT/151.101.2.132 application/octet-stream"
+        expect:
+          text: >-
+            Squid had http://security.debian.org/debian-security/dists/bookworm-security/InRelease
+            cached and checked with security.debian.org whether it was still current (it was, so
+            the cached copy was used).
+    counter_examples:
+      - "1794955802.001     12 10.0.0.7 TCP_HIT/200 18432 GET http://deb.debian.org/debian/dists/bookworm/InRelease - HIER_NONE/- application/octet-stream"
+
+  - id: squid.access.hit
+    title: "Served from cache: {{ domain or url }}"
+    match:
+      field: cache_result
+      regex: HIT$
+    extract: [client_ip, url, bytes]
+    optional: [domain]
+    template: >-
+      Squid answered {{ client_ip }}'s request for {{ url }} from its own cache
+      ({{ bytes | filesizeformat }}), without contacting the internet.
+    category: performance
+    tags: [cache_hit]
+    severity_override: info
+    examples:
+      - line: "1794955802.001     12 10.0.0.7 TCP_HIT/200 18432 GET http://deb.debian.org/debian/dists/bookworm/InRelease - HIER_NONE/- application/octet-stream"
+        expect:
+          text: >-
+            Squid answered 10.0.0.7's request for http://deb.debian.org/debian/dists/bookworm/InRelease
+            from its own cache (18.4 kB), without contacting the internet.
+      - line: "1794955807.002      2 10.0.0.5 TCP_MEM_HIT/200 1201 GET http://example.com/favicon.ico - HIER_NONE/- image/x-icon"
+        expect:
+          text: >-
+            Squid answered 10.0.0.5's request for http://example.com/favicon.ico from its own cache
+            (1.2 kB), without contacting the internet.
+    counter_examples:
+      - "1794955801.123    245 10.0.0.5 TCP_MISS/200 5123 GET http://example.com/index.html - HIER_DIRECT/93.184.216.34 text/html"
+
+  - id: squid.access.not_modified
+    title: "Unchanged: {{ domain or url }}"
+    match:
+      fields: {cache_result: TCP_MISS, status: 304}
+    extract: [client_ip, url]
+    optional: [domain]
+    template: >-
+      {{ client_ip }} already had {{ url }} saved and {{ domain or "the server" }} confirmed it has
+      not changed (304), so nothing had to be downloaded again.
+    category: performance
+    severity_override: info
+    examples:
+      - line: "1794955803.540    188 10.0.0.5 TCP_MISS/304 412 GET http://www.example.org/style.css - HIER_DIRECT/93.184.215.14 -"
+        expect:
+          text: >-
+            10.0.0.5 already had http://www.example.org/style.css saved and www.example.org
+            confirmed it has not changed (304), so nothing had to be downloaded again.
+    counter_examples:
+      - "1794955801.123    245 10.0.0.5 TCP_MISS/200 5123 GET http://example.com/index.html - HIER_DIRECT/93.184.216.34 text/html"
+
+  - id: squid.access.miss
+    title: "Fetched: {{ domain or url }}"
+    match:
+      fields: {cache_result: TCP_MISS}
+      field: status
+      regex: ^[23]\d\d$
+    extract: [client_ip, method, url, elapsed_ms]
+    optional: [domain]
+    template: >-
+      Squid fetched {{ url }} from the internet for {{ client_ip }} ({{ method }}, took
+      {{ elapsed_ms }} ms); it was not in the cache.
+    cause: First visit, content that may not be cached (POST, private or dynamic pages), or an expired copy.
+    category: performance
+    tags: [cache_miss]
+    severity_override: info
+    examples:
+      - line: "1794955801.123    245 10.0.0.5 TCP_MISS/200 5123 GET http://example.com/index.html - HIER_DIRECT/93.184.216.34 text/html"
+        expect:
+          title: "Fetched: example.com"
+          text: >-
+            Squid fetched http://example.com/index.html from the internet for 10.0.0.5 (GET, took
+            245 ms); it was not in the cache.
+    counter_examples:
+      - "1794955802.001     12 10.0.0.7 TCP_HIT/200 18432 GET http://deb.debian.org/debian/dists/bookworm/InRelease - HIER_NONE/- application/octet-stream"
+      - "1794955808.123     77 10.0.0.31 TCP_MISS/404 512 GET http://example.com/missing - HIER_DIRECT/93.184.216.34 text/html"
+
+  # ---------------------------------------------------------------- cache.log
+  - id: squid.cache.starting
+    title: Squid is starting
+    match:
+      regex: ^Starting Squid Cache version (?P<version>\S+)
+    template: Squid {{ version }} is starting up.
+    category: availability
+    severity_override: notice
+    tags: [restart]
+    examples:
+      - line: "2026/11/17 22:50:01 kid1| Starting Squid Cache version 6.6 for x86_64-pc-linux-gnu..."
+        expect:
+          text: Squid 6.6 is starting up.
+    counter_examples:
+      - "2026/11/17 22:55:01 kid1| Reconfiguring Squid Cache (version 6.6)..."
+
+  - id: squid.cache.reconfiguring
+    title: Squid reloaded its configuration
+    match:
+      regex: ^Reconfiguring Squid Cache
+    template: Squid is re-reading squid.conf without a full restart (squid -k reconfigure or a reload).
+    action: If something stops working right after this, check squid.conf for the recent change ("squid -k parse").
+    category: configuration
+    severity_override: notice
+    examples:
+      - line: "2026/11/17 22:55:01 kid1| Reconfiguring Squid Cache (version 6.6)..."
+        expect:
+          text: Squid is re-reading squid.conf without a full restart (squid -k reconfigure or a reload).
+    counter_examples:
+      - "2026/11/17 22:50:01 kid1| Starting Squid Cache version 6.6 for x86_64-pc-linux-gnu..."
+
+  - id: squid.cache.terminated_abnormally
+    title: Squid crashed
+    match:
+      regex: Terminated abnormally
+    template: Squid stopped because of an error, not because someone asked it to.
+    cause: Usually a FATAL message logged just before this line (bad configuration, permissions, a crash).
+    action: Read the FATAL line just above, fix it, then "systemctl start squid".
+    category: availability
+    severity_override: critical
+    examples:
+      - line: "2026/11/17 22:56:30 kid1| Squid Cache (Version 6.6): Terminated abnormally."
+        expect:
+          text: Squid stopped because of an error, not because someone asked it to.
+    counter_examples:
+      - "2026/11/17 22:57:00| Squid Cache (Version 3.5.27): Exiting normally."
+
+  - id: squid.cache.exiting
+    title: Squid stopped
+    match:
+      regex: Exiting normally
+    template: Squid shut down cleanly, as requested.
+    category: availability
+    severity_override: notice
+    examples:
+      - line: "2026/11/17 22:57:00| Squid Cache (Version 3.5.27): Exiting normally."
+        expect:
+          text: Squid shut down cleanly, as requested.
+    counter_examples:
+      - "2026/11/17 22:56:30 kid1| Squid Cache (Version 6.6): Terminated abnormally."
+
+  - id: squid.cache.config_missing
+    title: squid.conf cannot be opened
+    match:
+      regex: "Unable to open configuration file: (?P<path>[^:]+): \\((?P<errno>\\d+)\\) (?P<reason>.+)"
+    template: Squid cannot start because it cannot read its configuration file {{ path }} ({{ reason }}).
+    action: Restore {{ path | shquote }} (or reinstall the squid package's default), then check it with "squid -k parse".
+    category: configuration
+    severity_override: critical
+    examples:
+      - line: "2026/11/17 22:56:30 kid1| FATAL: Unable to open configuration file: /etc/squid/squid.conf: (2) No such file or directory"
+        expect:
+          text: >-
+            Squid cannot start because it cannot read its configuration file /etc/squid/squid.conf
+            (No such file or directory).
+    counter_examples:
+      - "2026/11/17 22:56:30 kid1| Squid Cache (Version 6.6): Terminated abnormally."
+
+  - id: squid.cache.permission_denied
+    title: "Permission denied: {{ path }}"
+    match:
+      regex: (?<![^\s'])(?P<path>/[^\s:']+)'?:? \(13\) Permission denied
+    template: Squid is not allowed to open {{ path }}.
+    cause: The file or its directory is not owned by / writable for the user Squid runs as (cache_effective_user, usually "proxy").
+    action: "Fix ownership, e.g. chown -R proxy:proxy {{ path | shquote }}, and check AppArmor/SELinux denials for squid."
+    category: configuration
+    severity_override: error
+    examples:
+      - line: "2026/11/17 23:00:00 kid1| ERROR: /var/spool/squid/swap.state: (13) Permission denied"
+        expect:
+          text: Squid is not allowed to open /var/spool/squid/swap.state.
+    counter_examples:
+      - "2026/11/17 22:56:30 kid1| FATAL: Unable to open configuration file: /etc/squid/squid.conf: (2) No such file or directory"
+
+  - id: squid.cache.log_not_writable
+    title: "Cannot write log: {{ path }}"
+    match:
+      regex: Cannot open '(?P<path>[^']+)' for writing
+    template: Squid cannot write its log file {{ path }}, so it will not start.
+    cause: The log directory is not writable by the user Squid runs as (cache_effective_user).
+    action: "chown proxy:proxy {{ path | shquote }} and its directory (or the user named in squid.conf), then start Squid again."
+    category: configuration
+    severity_override: critical
+    examples:
+      - line: "2026/11/17 23:00:00 kid1| FATAL: Cannot open '/var/log/squid/access.log' for writing. The parent directory must be writeable by the user 'proxy', which is the cache_effective_user set in squid.conf."
+        expect:
+          text: Squid cannot write its log file /var/log/squid/access.log, so it will not start.
+    counter_examples:
+      - "2026/11/17 22:50:01 kid1| Logfile: opening log daemon:/var/log/squid/access.log"
+
+  - id: squid.cache.swap_dirs_invalid
+    title: Cache directories missing or broken
+    match:
+      regex: Failed to verify one of the swap directories
+    template: Squid's disk cache directories (cache_dir) are missing or unusable, so it will not start.
+    action: Stop Squid, run "squid -z" to create the cache directories, check they belong to the proxy user, then start it.
+    category: configuration
+    severity_override: critical
+    references: ["man:squid(8)"]
+    examples:
+      - line: "2026/11/17 23:00:00 kid1| FATAL: Failed to verify one of the swap directories, Check cache.log for details. Run 'squid -z' to create swap directories if needed, or if running Squid for the first time."
+        expect:
+          text: Squid's disk cache directories (cache_dir) are missing or unusable, so it will not start.
+    counter_examples:
+      - "2026/11/17 22:50:01 kid1| Swap maxSize 0 + 262144 KB, estimated 20164 objects"
+
+  - id: squid.cache.disk_full
+    title: Cache disk is full
+    match:
+      regex: \(28\) No space left on device
+    template: Squid could not write to disk because the disk is full.
+    action: Free space (df -h /var/spool/squid /var/log/squid) or lower the cache_dir size in squid.conf, and set up log rotation.
+    category: availability
+    severity_override: error
+    examples:
+      - line: "2026/11/17 23:00:00 kid1| diskHandleWrite: FD 14: disk write error: (28) No space left on device"
+        expect:
+          text: Squid could not write to disk because the disk is full.
+    counter_examples:
+      - "2026/11/17 23:00:00 kid1| ERROR: /var/spool/squid/swap.state: (13) Permission denied"
+
+  - id: squid.cache.out_of_fds
+    title: Running out of connections
+    match:
+      regex: running out of filedescriptors
+    template: Squid is close to its limit of open files and connections; new requests may soon fail.
+    cause: More simultaneous clients or connections than the configured limit (max_filedescriptors / ulimit -n).
+    action: Raise max_filedescriptors in squid.conf (and LimitNOFILE in the squid.service unit), then restart Squid.
+    category: performance
+    severity_override: warning
+    examples:
+      - line: "2026/11/17 22:52:00 kid1| WARNING! Your cache is running out of filedescriptors"
+        expect:
+          text: Squid is close to its limit of open files and connections; new requests may soon fail.
+    counter_examples:
+      - "2026/11/17 22:50:01 kid1| With 1024 file descriptors available"
+
+  - id: squid.cache.dns_no_records
+    title: "Name not found: {{ host }}"
+    match:
+      regex: No (?:Address|DNS) records in response to '(?P<host>[^']+)'
+    template: The DNS server said {{ host }} does not exist, so Squid could not fetch it.
+    cause: A typo in the address, a site that no longer exists, or a DNS server that cannot resolve it.
+    action: Run "getent hosts {{ host | shquote }}" on the proxy host; if real sites fail too, check dns_nameservers in squid.conf.
+    category: availability
+    tags: [upstream]
+    severity_override: warning
+    examples:
+      - line: "2026/11/17 23:00:00 kid1| ipcacheParse: No Address records in response to 'nosuchhost.example'"
+        expect:
+          text: The DNS server said nosuchhost.example does not exist, so Squid could not fetch it.
+    counter_examples:
+      - "2026/11/17 22:50:01 kid1| Adding nameserver 127.0.0.53 from /etc/resolv.conf"
+
+  - id: squid.cache.dns_send_failed
+    title: Cannot reach the DNS server
+    match:
+      regex: "idnsSendQuery:? FD \\d+: sendto: \\(\\d+\\) (?P<reason>.+)"
+    template: Squid could not send a DNS query ({{ reason }}), so no new sites can be looked up.
+    cause: The network is down or the DNS server address in /etc/resolv.conf or dns_nameservers is unreachable.
+    action: Check the network ("ip route", "ping" the DNS server) and the nameservers Squid uses.
+    category: availability
+    tags: [upstream]
+    severity_override: error
+    examples:
+      - line: "2026/11/17 23:00:00 kid1| idnsSendQuery: FD 8: sendto: (101) Network is unreachable"
+        expect:
+          text: Squid could not send a DNS query (Network is unreachable), so no new sites can be looked up.
+    counter_examples:
+      - "2026/11/17 22:50:01 kid1| DNS IPv4 socket created at 0.0.0.0, FD 9"
+
+  - id: squid.cache.parent_dead
+    title: "Upstream proxy down: {{ peer }}"
+    match:
+      regex: Detected DEAD (?:Parent|Sibling)\s*:\s*(?P<peer>\S+)
+    template: Squid marked the upstream proxy {{ peer }} as down and stopped sending requests through it.
+    cause: "{{ peer }} stopped answering: it is down, overloaded, or the network to it is broken."
+    action: Check that {{ peer | shquote }} is running and reachable; requests that must go through it will fail until it is back.
+    category: availability
+    tags: [upstream]
+    severity_override: error
+    examples:
+      - line: "2026/11/17 23:00:00 kid1| Detected DEAD Parent: proxy2.corp.example"
+        expect:
+          text: Squid marked the upstream proxy proxy2.corp.example as down and stopped sending requests through it.
+    counter_examples:
+      - "2026/11/17 23:00:00 kid1| Detected REVIVED Parent: proxy2.corp.example"
+
+  - id: squid.cache.parent_revived
+    title: "Upstream proxy back: {{ peer }}"
+    match:
+      regex: Detected REVIVED (?:Parent|Sibling)\s*:\s*(?P<peer>\S+)
+    template: The upstream proxy {{ peer }} is answering again and Squid is using it.
+    category: availability
+    severity_override: notice
+    examples:
+      - line: "2026/11/17 23:00:00 kid1| Detected REVIVED Parent: proxy2.corp.example"
+        expect:
+          text: The upstream proxy proxy2.corp.example is answering again and Squid is using it.
+    counter_examples:
+      - "2026/11/17 23:00:00 kid1| Detected DEAD Parent: proxy2.corp.example"
+
+  - id: squid.cache.connect_failed
+    title: "Connection failed: {{ peer }}"
+    match:
+      regex: (?:TCP connection to|Connection to) (?P<peer>[^\s/]+)(?:/(?P<port>\d+))? failed
+    template: >-
+      Squid could not open a connection to {{ peer }}{% if port %} on port {{ port }}{% endif %}.
+    cause: The server or upstream proxy is down, a firewall blocks the connection, or the network path is broken.
+    action: From the proxy host, test the connection (e.g. "nc -vz {{ peer | shquote }} {{ (port or 80) | shquote }}").
+    category: availability
+    tags: [upstream]
+    severity_override: error
+    examples:
+      - line: "2026/11/17 22:53:15 kid1| ERROR: Connection to 10.0.5.20 failed"
+        expect:
+          text: Squid could not open a connection to 10.0.5.20.
+      - line: "2026/11/17 22:53:15 kid1| TCP connection to proxy2.corp.example/3128 failed"
+        expect:
+          text: Squid could not open a connection to proxy2.corp.example on port 3128.
+    counter_examples:
+      - "2026/11/17 23:00:00 kid1| Detected DEAD Parent: proxy2.corp.example"
+
+  - id: squid.cache.no_forward_path
+    title: "No way to reach {{ url }}"
+    match:
+      regex: Failed to select source for '(?P<url>[^']+)'
+    template: Squid found no allowed route for {{ url }}; every upstream proxy is down or excluded and going direct is not permitted.
+    action: Check that the cache_peer parents are up, and the never_direct / always_direct rules in squid.conf.
+    category: availability
+    severity_override: error
+    examples:
+      - line: "2026/11/17 23:00:00 kid1| Failed to select source for 'http://example.com/'"
+        expect:
+          text: >-
+            Squid found no allowed route for http://example.com/; every upstream proxy is down or
+            excluded and going direct is not permitted.
+    counter_examples:
+      - "2026/11/17 22:53:15 kid1| ERROR: Connection to 10.0.5.20 failed"
+
+  - id: squid.cache.host_forgery
+    title: "Host header forgery from {{ client }}"
+    match:
+      regex: "SECURITY ALERT: Host header forgery detected on .*?remote=(?P<client>\\S+?)(?::\\d+)? FD"
+    template: >-
+      A request from {{ client }} claimed to be for a site whose address does not match where it
+      was actually going, so Squid treated it as possibly forged.
+    cause: Common with transparent/intercepting proxies and sites behind CDNs; occasionally a real cache-poisoning attempt.
+    action: If this repeats for normal sites, make the clients and Squid use the same DNS server. If one client triggers it constantly, look at that machine.
+    category: security
+    tags: [detection]
+    severity_override: warning
+    confidence: 0.7
+    references: ["https://wiki.squid-cache.org/KnowledgeBase/HostHeaderForgery"]
+    examples:
+      - line: "2026/11/17 22:54:00 kid1| SECURITY ALERT: Host header forgery detected on conn44 local=10.0.0.2:3128 remote=10.0.0.9:50122 FD 20 flags=1 (local IP does not match any domain IP)"
+        expect:
+          text: >-
+            A request from 10.0.0.9 claimed to be for a site whose address does not match where it
+            was actually going, so Squid treated it as possibly forged.
+    counter_examples:
+      - "2026/11/17 22:51:10 kid1| ERROR: failure while accepting a TLS connection on conn3 local=[::]:3128 remote=[::] FD 12 flags=9: SQUID_TLS_ERR_ACCEPT+TLS_LIB_ERR=1408F09C+TLS_IO_ERR=1"
+
+  - id: squid.cache.tls_accept_failed
+    title: Failed TLS handshake on the proxy port
+    match:
+      regex: failure while accepting a TLS connection
+    template: A client tried to start an encrypted (TLS) connection that Squid could not accept.
+    cause: >-
+      A client speaking HTTPS to a plain-HTTP proxy port, an untrusted interception certificate,
+      or a scanner probing the port.
+    action: If it is constant, find the client (cache.log with debug_options ALL,1 33,2) and fix its proxy settings.
+    category: configuration
+    severity_override: warning
+    confidence: 0.6
+    examples:
+      - line: "2026/11/17 22:51:10 kid1| ERROR: failure while accepting a TLS connection on conn3 local=[::]:3128 remote=[::] FD 12 flags=9: SQUID_TLS_ERR_ACCEPT+TLS_LIB_ERR=1408F09C+TLS_IO_ERR=1"
+        expect:
+          text: A client tried to start an encrypted (TLS) connection that Squid could not accept.
+    counter_examples:
+      - "2026/11/17 22:50:01 kid1| Accepting HTTP Socket connections at conn3 local=[::]:3128 remote=[::] FD 12 flags=9"
+
+  - id: squid.cache.no_hostname
+    title: visible_hostname not set
+    match:
+      regex: Could not determine this machines public hostname
+    template: Squid could not work out this machine's name, which it shows on its error pages.
+    action: Add "visible_hostname proxy.example.lan" (any name) to /etc/squid/squid.conf and reload Squid.
+    category: configuration
+    severity_override: warning
+    examples:
+      - line: "2026/11/17 22:50:01 kid1| WARNING: Could not determine this machines public hostname. Please configure one or set 'visible_hostname'."
+        expect:
+          text: Squid could not work out this machine's name, which it shows on its error pages.
+    counter_examples:
+      - "2026/11/17 22:50:01 kid1| Service Name: squid"
+
+  - id: squid.cache.listening
+    title: Squid is accepting connections
+    match:
+      regex: Accepting (?P<kind>HTTPS?) Socket connections at .*?local=(?P<address>\S+)
+    template: Squid is ready and listening for {{ kind }} proxy clients on {{ address }}.
+    category: availability
+    severity_override: info
+    examples:
+      - line: "2026/11/17 22:50:01 kid1| Accepting HTTP Socket connections at conn3 local=[::]:3128 remote=[::] FD 12 flags=9"
+        expect:
+          text: Squid is ready and listening for HTTP proxy clients on [::]:3128.
+    counter_examples:
+      - "2026/11/17 22:55:01 kid1| Closing HTTP(S) port [::]:3128"

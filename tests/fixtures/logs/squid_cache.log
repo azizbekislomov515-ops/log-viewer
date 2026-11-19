@@ -1,0 +1,35 @@
+2026/11/17 22:50:01 kid1| Set Current Directory to /var/spool/squid
+2026/11/17 22:50:01 kid1| Starting Squid Cache version 6.6 for x86_64-pc-linux-gnu...
+2026/11/17 22:50:01 kid1| Service Name: squid
+2026/11/17 22:50:01 kid1| Process ID 1450
+2026/11/17 22:50:01 kid1| Process Roles: worker
+2026/11/17 22:50:01 kid1| With 1024 file descriptors available
+2026/11/17 22:50:01 kid1| Initializing IP Cache...
+2026/11/17 22:50:01 kid1| DNS IPv6 socket created at [::], FD 8
+2026/11/17 22:50:01 kid1| DNS IPv4 socket created at 0.0.0.0, FD 9
+2026/11/17 22:50:01 kid1| Adding nameserver 127.0.0.53 from /etc/resolv.conf
+2026/11/17 22:50:01 kid1| Logfile: opening log daemon:/var/log/squid/access.log
+2026/11/17 22:50:01 kid1| WARNING: Could not determine this machines public hostname. Please configure one or set 'visible_hostname'.
+2026/11/17 22:50:01 kid1| Store logging disabled
+2026/11/17 22:50:01 kid1| Swap maxSize 0 + 262144 KB, estimated 20164 objects
+2026/11/17 22:50:01 kid1| Using Least Load store dir selection
+2026/11/17 22:50:01 kid1| Accepting HTTP Socket connections at conn3 local=[::]:3128 remote=[::] FD 12 flags=9
+2026/11/17 22:50:02 kid1| storeLateRelease: released 0 objects
+2026/11/17 22:51:10 kid1| ERROR: failure while accepting a TLS connection on conn3 local=[::]:3128 remote=[::] FD 12 flags=9: SQUID_TLS_ERR_ACCEPT+TLS_LIB_ERR=1408F09C+TLS_IO_ERR=1
+2026/11/17 22:52:00 kid1| WARNING! Your cache is running out of filedescriptors
+2026/11/17 22:53:15 kid1| ERROR: Connection to 10.0.5.20 failed
+    connection: conn12345 local=10.0.0.2:51234 remote=10.0.5.20:80 FD 31 flags=1
+2026/11/17 22:54:00 kid1| SECURITY ALERT: Host header forgery detected on conn44 local=10.0.0.2:3128 remote=10.0.0.9:50122 FD 20 flags=1 (local IP does not match any domain IP)
+2026/11/17 22:55:01 kid1| Logfile: opening log daemon:/var/log/squid/access.log
+2026/11/17 22:55:01 kid1| Reconfiguring Squid Cache (version 6.6)...
+2026/11/17 22:55:01 kid1| Closing HTTP(S) port [::]:3128
+2026/11/17 22:56:30 kid1| FATAL: Unable to open configuration file: /etc/squid/squid.conf: (2) No such file or directory
+2026/11/17 22:56:30 kid1| Squid Cache (Version 6.6): Terminated abnormally.
+2026/11/17 22:57:00| Squid Cache (Version 3.5.27): Exiting normally.
+2026/11/17 22:57:30.123 kid1| 5,2| comm.cc(123) commHandleWrite: write() failed
+2026/11/17 22:58:00 kid2| BUG 3279: HTTP reply without Date:
+2026/11/17 22:59:00 kid1| Squid plugin modules loaded: 0
+2026/13/45 25:61:00 kid1| impossible date
+2026/11/17 kid1| no time
+kid1| no stamp at all
+just some text

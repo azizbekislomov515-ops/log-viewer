@@ -2,25 +2,42 @@
 name = "loglens"
 version = "0.1.0"
 description = "Discover every log source on a Linux machine and explain it in plain language."
-readme = "CLAUDE.md"
+readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
     "docker>=7.1",
     "PyYAML>=6.0",
+    "inotify-simple>=1.3",
+    "jinja2>=3.1",
+    "jsonschema>=4.23",
+    "pyside6>=6.7",
+    "regex>=2024.11.6",
 ]
 
 [project.scripts]
 loglens-cli = "loglens.cli:main"
+loglens-helper = "loglens.helper.server:main"
+
+[project.gui-scripts]
+loglens = "loglens.gui.app:main"
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
+    "pytest-asyncio>=0.24",
     "ruff>=0.8",
     "mypy>=1.13",
     "types-PyYAML",
     "types-docker",
     "pre-commit>=4.0",
+    "hypothesis>=6.170.15",
+    "pytest-cov>=7.1.0",
+    "types-jsonschema>=4.26.0.20261006",
+    "pytest-qt>=4.4",
+    "types-regex>=2026.11.15.20261116",
+    "bandit>=1.9.4",
+    "pip-audit>=2.10.1",
 ]
 
 [build-system]
@@ -29,6 +46,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/loglens"]
+
+# Data files ship inside the package (see loglens/resources.py).
+[tool.hatch.build.targets.wheel.force-include]
+"rules" = "loglens/_data/rules"
+"tests/fixtures/logs" = "loglens/_data/demo_logs"
+"demo" = "loglens/_data/demo_stack"
+"packaging/share" = "loglens/_data/share"
 
 [tool.ruff]
 line-length = 100
@@ -41,6 +65,8 @@ ignore = ["PLR0913", "PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S108", "PLR0915"]
+# Widget constructors and the screenshot script build many widgets in one place.
+"src/loglens/gui/**" = ["PLR0915"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -48,6 +74,22 @@ strict = true
 files = ["src/loglens"]
 warn_unreachable = true
 
+[[tool.mypy.overrides]]
+module = ["inotify_simple"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: needs real Docker / journald; skipped automatically when unavailable",
+    "perf: asserts on timing/memory; run on dedicated hardware (CI: non-blocking job)",
+]
+
+[tool.bandit]
+# B101 (assert): every assert in src narrows a type for an invariant already enforced
+# elsewhere (JSON Schema validation, Qt return types); none guards security, so -O is safe.
+skips = ["B101"]
+exclude_dirs = ["tests"]

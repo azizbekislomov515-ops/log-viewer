@@ -1,0 +1,701 @@
+# ClamAV: clamd (scan results, daemon state), freshclam (signature updates), clamscan summaries.
+#
+# The clamav parser sets `event` (virus_found, scan_error, db_updated, ...) and fields such
+# as file, signature, error, database, version, signatures, mirror. The message keeps
+# freshclam's "^" (warning) and "!" (error) prefixes.
+pack: clamav
+version: 1
+description: ClamAV antivirus daemon, scanner and signature updater.
+example_source: file:/var/log/clamav/clamav.log
+applies_to:
+  parsers: [clamav]
+  units: [clamav-daemon.service, clamav-freshclam.service, "clamd*", "freshclam*"]
+  paths: ["/var/log/clamav/*", "/var/log/clamd*", "/var/log/freshclam*"]
+  images: ["*clamav*"]
+  services: ["*clam*"]
+
+overview:
+  key_fields: {signature: signature}
+  thresholds: {error_rate: 0.5}
+  cards:
+    - {title: Detections, kind: recent, when: {tags: [detection]}, columns: [signature, file, client],
+       limit: 10, warn_at: 1, empty: No malware found.}
+    - {title: Detections by signature, kind: top, field: signature, when: {tags: [detection]}}
+    - {title: Signature updates, kind: recent, when: {tags: [update, update_failure]}, limit: 5,
+       empty: No update activity.}
+    - {title: Files that could not be scanned, kind: count,
+       when: {rules: [clamav.scan.error, clamav.scan.access_denied]}, warn_at: 1}
+
+rules:
+  # ---------------------------------------------------------------- scan results
+  - id: clamav.scan.stream_eicar
+    title: "Antivirus test file from {{ client }}"
+    match:
+      field: raw
+      regex: 'instream\((?P<client>[^@)]+)@\d+\): (?P<signature>\S*(?i:eicar)\S*) FOUND'
+    template: >-
+      A file that {{ client }} sent to ClamAV for scanning is the EICAR test file. It is harmless:
+      it exists only to check that the antivirus is working.
+    action: Nothing to do if this was a test; otherwise find out what on {{ client | shquote }} sent it.
+    category: security
+    severity_override: notice
+    tags: [detection]
+    examples:
+      - line: "Thu Nov 19 08:26:10 2026 -> instream(172.18.0.7@33516): Eicar-Test-Signature.UNOFFICIAL FOUND"
+        expect:
+          title: Antivirus test file from 172.18.0.7
+          text: >-
+            A file that 172.18.0.7 sent to ClamAV for scanning is the EICAR test file. It is
+            harmless: it exists only to check that the antivirus is working.
+    counter_examples:
+      - "Thu Nov 19 08:26:10 2026 -> instream(172.18.0.7@33516): Win.Trojan.Agent-1 FOUND"
+
+  - id: clamav.scan.stream_found
+    title: "Malware sent by {{ client }}"
+    match:
+      field: raw
+      regex: 'instream\((?P<client>[^@)]+)@\d+\): (?P<signature>\S+) FOUND'
+    template: ClamAV found malware ({{ signature }}) in a file that {{ client }} sent for scanning.
+    cause: A program on {{ client }} (a mail or web filter, a backup, a script calling clamdscan) passed it a malicious file.
+    action: >-
+      Find out which program on {{ client | shquote }} sent the file, quarantine the original
+      and scan that machine.
+    category: security
+    severity_override: critical
+    tags: [detection]
+    examples:
+      - line: "Thu Nov 19 08:26:10 2026 -> instream(10.0.0.9@41000): Win.Trojan.Agent-1 FOUND"
+        expect:
+          text: ClamAV found malware (Win.Trojan.Agent-1) in a file that 10.0.0.9 sent for scanning.
+    counter_examples:
+      - "Thu Nov 19 08:26:10 2026 -> instream(172.18.0.7@33510): OK"
+
+  - id: clamav.scan.stream_clean
+    title: "Clean file from {{ client }}"
+    match:
+      field: raw
+      regex: 'instream\((?P<client>[^@)]+)@\d+\): OK\s*$'
+    template: A file that {{ client }} sent to ClamAV for scanning is clean.
+    category: info
+    severity_override: info
+    examples:
+      - line: "Thu Nov 19 08:26:10 2026 -> instream(172.18.0.7@33510): OK"
+        expect:
+          text: A file that 172.18.0.7 sent to ClamAV for scanning is clean.
+    counter_examples:
+      - "Thu Nov 19 08:26:10 2026 -> instream(10.0.0.9@41000): Win.Trojan.Agent-1 FOUND"
+
+  - id: clamav.scan.eicar
+    title: "Antivirus test file: {{ file }}"
+    match:
+      fields: {event: virus_found}
+      field: signature
+      regex: (?i)eicar
+    extract: [file]
+    template: >-
+      ClamAV detected the EICAR test file at {{ file }}. It is harmless: it exists only to check
+      that the antivirus is working.
+    action: Nothing to do if you or an admin put it there on purpose; delete it after the test.
+    category: security
+    tags: [detection]
+    severity_override: notice
+    references: ["https://www.eicar.org/download-anti-malware-testfile/"]
+    examples:
+      - line: "Wed Nov 18 01:02:03 2026 -> /home/azik/Downloads/eicar.com: Win.Test.EICAR_HDB-1 FOUND"
+        expect:
+          title: "Antivirus test file: /home/azik/Downloads/eicar.com"
+          text: >-
+            ClamAV detected the EICAR test file at /home/azik/Downloads/eicar.com. It is harmless:
+            it exists only to check that the antivirus is working.
+    counter_examples:
+      - "Wed Nov 18 01:02:04 2026 -> /home/azik/Downloads/invoice.zip: Doc.Dropper.Agent-1540415 FOUND"
+
+  - id: clamav.scan.pua
+    title: "Potentially unwanted program: {{ file }}"
+    match:
+      fields: {event: virus_found}
+      field: signature
+      regex: ^PUA\.
+    extract: [file, signature]
+    template: >-
+      ClamAV flagged {{ file }} as a potentially unwanted program ({{ signature }}): not
+      necessarily malware, but software such as adware, a crack or a hacking tool.
+    action: Check whether {{ file | shquote }} is software you intended to have; remove it if not.
+    category: security
+    tags: [detection]
+    severity_override: warning
+    confidence: 0.7
+    examples:
+      - line: "Wed Nov 18 01:02:03 2026 -> /srv/share/tools/nc.exe: PUA.Win.Tool.Netcat-1 FOUND"
+        expect:
+          text: >-
+            ClamAV flagged /srv/share/tools/nc.exe as a potentially unwanted program
+            (PUA.Win.Tool.Netcat-1): not necessarily malware, but software such as adware, a crack
+            or a hacking tool.
+    counter_examples:
+      - "Wed Nov 18 01:02:04 2026 -> /home/azik/Downloads/invoice.zip: Doc.Dropper.Agent-1540415 FOUND"
+
+  - id: clamav.scan.found
+    title: "Malware found: {{ file }}"
+    match:
+      fields: {event: virus_found}
+    extract: [file, signature]
+    template: ClamAV found malware ({{ signature }}) in {{ file }}.
+    cause: The file matches a known malicious signature; it most likely arrived by download, e-mail attachment or a shared folder.
+    action: >-
+      Do not open {{ file | shquote }}. Move it to quarantine or delete it, then find out where it came
+      from and scan the machine(s) that touched it.
+    category: security
+    tags: [detection]
+    severity_override: critical
+    examples:
+      - line: "Wed Nov 18 01:02:04 2026 -> /home/azik/Downloads/invoice.zip: Doc.Dropper.Agent-1540415 FOUND"
+        expect:
+          title: "Malware found: /home/azik/Downloads/invoice.zip"
+          text: ClamAV found malware (Doc.Dropper.Agent-1540415) in /home/azik/Downloads/invoice.zip.
+          severity: critical
+          category: security
+      - line: "/srv/share/macro.docm: Doc.Downloader.Emotet-6974343-0 FOUND"
+        expect:
+          text: ClamAV found malware (Doc.Downloader.Emotet-6974343-0) in /srv/share/macro.docm.
+    counter_examples:
+      - "Wed Nov 18 01:02:03 2026 -> /home/azik/Downloads/report.pdf: OK"
+
+  - id: clamav.scan.access_denied
+    title: "Could not scan {{ file }}"
+    match:
+      fields: {event: scan_error}
+      field: error
+      regex: (?i)access denied|permission denied
+    extract: [file]
+    template: ClamAV was not allowed to read {{ file }}, so this file was not checked.
+    cause: The clamd service user (usually "clamav") has no read permission on the file or its folder.
+    action: >-
+      Scan it with "clamdscan --fdpass {{ file | shquote }}" (passes your permissions), or grant the clamav
+      user read access if it should be scanned routinely.
+    category: configuration
+    severity_override: warning
+    examples:
+      - line: "Wed Nov 18 01:02:05 2026 -> /root/secret: Access denied. ERROR"
+        expect:
+          text: ClamAV was not allowed to read /root/secret, so this file was not checked.
+    counter_examples:
+      - "Wed Nov 18 01:02:05 2026 -> /srv/a.zip: Can't create temporary directory ERROR"
+
+  - id: clamav.scan.error
+    title: "Scan failed: {{ file }}"
+    match:
+      fields: {event: scan_error}
+    extract: [file, error]
+    template: ClamAV could not finish scanning {{ file }} ({{ error }}), so it was not checked.
+    action: Re-run the scan on {{ file | shquote }}; if it keeps failing, check free space in /tmp and the clamd log around this time.
+    category: availability
+    severity_override: warning
+    examples:
+      - line: "Wed Nov 18 01:02:05 2026 -> /srv/a.zip: Can't create temporary directory ERROR"
+        expect:
+          text: >-
+            ClamAV could not finish scanning /srv/a.zip (Can't create temporary directory), so it
+            was not checked.
+    counter_examples:
+      - "Wed Nov 18 01:02:04 2026 -> /home/azik/Downloads/invoice.zip: Doc.Dropper.Agent-1540415 FOUND"
+
+  - id: clamav.scan.clean
+    title: "Clean: {{ file }}"
+    match:
+      fields: {event: scan_clean}
+    extract: [file]
+    template: ClamAV scanned {{ file }} and found nothing malicious.
+    category: info
+    severity_override: info
+    examples:
+      - line: "Wed Nov 18 01:02:03 2026 -> /home/azik/Downloads/report.pdf: OK"
+        expect:
+          text: ClamAV scanned /home/azik/Downloads/report.pdf and found nothing malicious.
+    counter_examples:
+      - "Wed Nov 18 01:02:05 2026 -> /root/secret: Access denied. ERROR"
+
+  - id: clamav.scan.summary_infected
+    title: "Scan finished: {{ count }} infected"
+    match:
+      regex: ^Infected files:\s*(?P<count>[1-9]\d*)\s*$
+    template: The scan finished and found {{ count }} infected file(s).
+    action: Look at the FOUND lines above this summary for the file names and deal with each one.
+    category: security
+    severity_override: error
+    examples:
+      - line: "Infected files: 2"
+        expect:
+          text: The scan finished and found 2 infected file(s).
+    counter_examples:
+      - "Infected files: 0"
+
+  - id: clamav.scan.summary_clean
+    title: "Scan finished: nothing found"
+    match:
+      regex: ^Infected files:\s*0\s*$
+    template: The scan finished and found no infected files.
+    category: info
+    severity_override: info
+    examples:
+      - line: "Infected files: 0"
+        expect:
+          text: The scan finished and found no infected files.
+    counter_examples:
+      - "Infected files: 2"
+
+  - id: clamav.scan.summary_scanned
+    title: "Scanned {{ count }} files"
+    match:
+      regex: ^Scanned files:\s*(?P<count>\d+)\s*$
+    template: The scan checked {{ count }} files in total.
+    category: info
+    severity_override: info
+    examples:
+      - line: "Scanned files: 1204"
+        expect:
+          text: The scan checked 1204 files in total.
+    counter_examples:
+      - "Scanned directories: 31"
+
+  - id: clamav.scan.partial
+    title: Large file only partly scanned
+    match:
+      regex: exceeds limits - only scanning (?P<bytes>\d+) bytes
+    template: >-
+      A compressed file was bigger than ClamAV's size limits, so only its first
+      {{ bytes | int | filesizeformat }} were scanned.
+    action: Raise MaxScanSize / MaxFileSize in clamd.conf if large archives must be fully scanned (costs memory and time).
+    category: configuration
+    severity_override: warning
+    examples:
+      - line: "Wed Nov 18 01:02:07 2026 -> LibClamAV Warning: cli_scanxz: decompress file size exceeds limits - only scanning 27262976 bytes"
+        expect:
+          text: >-
+            A compressed file was bigger than ClamAV's size limits, so only its first 27.3 MB were
+            scanned.
+    counter_examples:
+      - "Wed Nov 18 01:02:06 2026 -> WARNING: lstat() failed on: /proc/1/fd/3"
+
+  - id: clamav.scan.lstat_failed
+    title: "Skipped: {{ path }}"
+    match:
+      regex: lstat\(\) failed on:\s*(?P<path>\S+)
+    template: ClamAV skipped {{ path }} because it disappeared or could not be inspected while scanning.
+    cause: Usually a temporary or special file (under /proc, /sys or a socket) that is not worth scanning.
+    action: Exclude /proc, /sys and /dev from scans (ExcludePath in clamd.conf); otherwise this is harmless.
+    category: info
+    severity_override: info
+    examples:
+      - line: "Wed Nov 18 01:02:06 2026 -> WARNING: lstat() failed on: /proc/1/fd/3"
+        expect:
+          text: ClamAV skipped /proc/1/fd/3 because it disappeared or could not be inspected while scanning.
+    counter_examples:
+      - "Wed Nov 18 01:02:08 2026 -> ERROR: Can't open file or directory"
+
+  # ---------------------------------------------------------------- clamd daemon
+  - id: clamav.daemon.started
+    title: ClamAV daemon started
+    match:
+      fields: {event: daemon_started}
+    template: The ClamAV scanning service (clamd) started.
+    category: availability
+    severity_override: notice
+    tags: [restart]
+    examples:
+      - line: "Tue Nov 17 22:50:01 2026 -> +++ Started at Tue Nov 17 22:50:01 2026"
+        expect:
+          text: The ClamAV scanning service (clamd) started.
+    counter_examples:
+      - "Wed Nov 18 02:00:00 2026 -> --- Stopped at Wed Nov 18 02:00:00 2026"
+
+  - id: clamav.daemon.stopped
+    title: ClamAV daemon stopped
+    match:
+      fields: {event: daemon_stopped}
+    template: The ClamAV scanning service (clamd) stopped; files are not being scanned on access until it starts again.
+    action: If nobody stopped it on purpose, run "systemctl status clamav-daemon" and start it.
+    category: availability
+    severity_override: notice
+    examples:
+      - line: "Wed Nov 18 02:00:00 2026 -> --- Stopped at Wed Nov 18 02:00:00 2026"
+        expect:
+          text: >-
+            The ClamAV scanning service (clamd) stopped; files are not being scanned on access until
+            it starts again.
+    counter_examples:
+      - "Tue Nov 17 22:50:01 2026 -> +++ Started at Tue Nov 17 22:50:01 2026"
+
+  - id: clamav.daemon.loaded
+    title: "Signatures loaded ({{ signatures }})"
+    match:
+      fields: {event: [db_loaded, db_reloaded]}
+    extract: [signatures]
+    template: clamd loaded its virus database ({{ signatures | thousands }} signatures) and is ready to scan.
+    category: info
+    severity_override: info
+    examples:
+      - line: "Tue Nov 17 22:50:12 2026 -> Loaded 8708530 signatures."
+        expect:
+          text: clamd loaded its virus database (8,708,530 signatures) and is ready to scan.
+      - line: "Wed Nov 18 00:50:24 2026 -> Database correctly reloaded (8710423 signatures)"
+        expect:
+          text: clamd loaded its virus database (8,710,423 signatures) and is ready to scan.
+    counter_examples:
+      - "Wed Nov 18 00:50:14 2026 -> SelfCheck: Database modification detected. Forcing reload."
+
+  - id: clamav.daemon.db_changed
+    title: New signatures detected
+    match:
+      fields: {event: db_changed}
+    template: clamd noticed that the virus database files changed and is reloading them.
+    category: info
+    severity_override: info
+    examples:
+      - line: "Wed Nov 18 00:50:14 2026 -> SelfCheck: Database modification detected. Forcing reload."
+        expect:
+          text: clamd noticed that the virus database files changed and is reloading them.
+    counter_examples:
+      - "Tue Nov 17 23:50:14 2026 -> SelfCheck: Database status OK."
+
+  - id: clamav.daemon.no_database
+    title: No virus database
+    match:
+      regex: No supported database files found in (?P<path>\S+)
+    template: ClamAV found no virus database in {{ path }}, so it cannot scan anything.
+    cause: freshclam has never completed a download, or the database files were deleted.
+    action: Run "sudo freshclam" and check its output, then restart clamd ("systemctl restart clamav-daemon").
+    category: availability
+    severity_override: critical
+    examples:
+      - line: "Wed Nov 18 01:02:09 2026 -> LibClamAV Error: cli_loaddbdir(): No supported database files found in /var/lib/clamav"
+        expect:
+          text: ClamAV found no virus database in /var/lib/clamav, so it cannot scan anything.
+    counter_examples:
+      - "Tue Nov 17 22:50:01 2026 -> Reading databases from /var/lib/clamav"
+
+  - id: clamav.daemon.db_old
+    title: Virus database is out of date
+    match:
+      regex: (?i)virus database is older than (?P<days>\d+) days
+    template: ClamAV's virus signatures are more than {{ days }} days old, so recent malware may not be detected.
+    cause: freshclam is not running or cannot reach the update servers.
+    action: Check "systemctl status clamav-freshclam" and the freshclam log for download errors.
+    category: security
+    severity_override: warning
+    examples:
+      - line: "Wed Nov 18 01:00:00 2026 -> LibClamAV Warning: *** The virus database is older than 7 days! ***"
+        expect:
+          text: >-
+            ClamAV's virus signatures are more than 7 days old, so recent malware may not be
+            detected.
+    counter_examples:
+      - "Wed Nov 18 18:36:45 2026 -> WARNING: Your ClamAV installation is OUTDATED!"
+
+  - id: clamav.daemon.socket_in_use
+    title: "clamd socket busy: {{ socket }}"
+    match:
+      regex: Socket file (?P<socket>\S+) is in use by another process
+    template: clamd cannot start because another process (probably an older clamd) already uses {{ socket }}.
+    action: Stop the other instance ("systemctl stop clamav-daemon"; "pkill clamd"), remove {{ socket | shquote }} if stale, then start clamd once.
+    category: availability
+    severity_override: error
+    examples:
+      - line: "Wed Nov 18 01:00:00 2026 -> ERROR: LOCAL: Socket file /var/run/clamav/clamd.ctl is in use by another process."
+        expect:
+          text: >-
+            clamd cannot start because another process (probably an older clamd) already uses
+            /var/run/clamav/clamd.ctl.
+    counter_examples:
+      - "Tue Nov 17 22:50:14 2026 -> LOCAL: Unix socket file /var/run/clamav/clamd.ctl"
+
+  - id: clamav.daemon.cannot_connect
+    title: "Cannot reach clamd at {{ socket }}"
+    match:
+      regex: '(?:Can''t|Could not) connect to clamd (?:through|on (?:LocalSocket|TCP)) (?P<socket>[^:\s]+)(?::\s*(?P<reason>.+))?'
+    template: >-
+      A ClamAV tool could not talk to the clamd service at {{ socket }}{% if reason %}
+      ({{ reason }}){% endif %}.
+    cause: clamd is not running (it may still be loading signatures, or it crashed), or the socket path differs between clamd.conf and the tool.
+    action: Run "systemctl status clamav-daemon"; if it is running, compare LocalSocket in clamd.conf with {{ socket | shquote }}.
+    category: availability
+    severity_override: error
+    examples:
+      - line: "Wed Nov 18 18:36:47 2026 -> Clamd was NOT notified: Can't connect to clamd through /var/run/clamav/clamd.ctl: No such file or directory"
+        expect:
+          text: >-
+            A ClamAV tool could not talk to the clamd service at /var/run/clamav/clamd.ctl (No such
+            file or directory).
+      - line: "ERROR: Could not connect to clamd on LocalSocket /var/run/clamav/clamd.ctl: Connection refused"
+        expect:
+          text: >-
+            A ClamAV tool could not talk to the clamd service at /var/run/clamav/clamd.ctl
+            (Connection refused).
+    counter_examples:
+      - "Wed Nov 18 15:36:47 2026 -> Clamd successfully notified about the update."
+
+  - id: clamav.daemon.out_of_memory
+    title: ClamAV ran out of memory
+    match:
+      regex: "(?:Can't|Cannot) allocate memory(?: \\((?P<bytes>\\d+) bytes\\))?"
+    template: >-
+      ClamAV could not get enough memory{% if bytes %} (it asked for
+      {{ bytes | int | filesizeformat }}){% endif %}; scans or signature loading may fail.
+    cause: The signature database needs about 1-2 GB of RAM, more while reloading; the machine or the service's memory limit is too small.
+    action: Add RAM or swap, or set "ConcurrentDatabaseReload no" in clamd.conf to halve peak memory during reloads.
+    category: performance
+    severity_override: error
+    examples:
+      - line: "Wed Nov 18 01:00:00 2026 -> LibClamAV Error: cli_malloc(): Can't allocate memory (65536 bytes)."
+        expect:
+          text: >-
+            ClamAV could not get enough memory (it asked for 65.5 kB); scans or signature loading
+            may fail.
+      - line: "Wed Nov 18 01:00:00 2026 -> ERROR: mmap: Cannot allocate memory"
+        expect:
+          text: ClamAV could not get enough memory; scans or signature loading may fail.
+    counter_examples:
+      - "Wed Nov 18 01:02:08 2026 -> ERROR: Can't open file or directory"
+
+  # ---------------------------------------------------------------- freshclam
+  - id: clamav.update.db_updated
+    title: "Signatures updated: {{ database }}"
+    match:
+      fields: {event: db_updated}
+    extract: [database, version, signatures]
+    template: freshclam downloaded a newer {{ database }} (version {{ version }}, {{ signatures | thousands }} signatures).
+    category: info
+    tags: [update]
+    severity_override: info
+    examples:
+      - line: "Wed Nov 18 15:36:47 2026 -> daily.cld updated (version: 28187, sigs: 2074152, f-level: 90, builder: raynman)"
+        expect:
+          text: freshclam downloaded a newer daily.cld (version 28187, 2,074,152 signatures).
+    counter_examples:
+      - "Wed Nov 18 15:36:47 2026 -> main.cvd database is up-to-date (version: 62, sigs: 6647427, f-level: 90, builder: sigmgr)"
+
+  - id: clamav.update.up_to_date
+    title: "Up to date: {{ database }}"
+    match:
+      fields: {event: db_up_to_date}
+    extract: [database, version]
+    template: freshclam checked {{ database }} and it is already the latest version ({{ version }}).
+    category: info
+    tags: [update]
+    severity_override: info
+    examples:
+      - line: "Wed Nov 18 15:36:47 2026 -> main.cvd database is up-to-date (version: 62, sigs: 6647427, f-level: 90, builder: sigmgr)"
+        expect:
+          text: freshclam checked main.cvd and it is already the latest version (62).
+    counter_examples:
+      - "Wed Nov 18 15:36:47 2026 -> daily.cld updated (version: 28187, sigs: 2074152, f-level: 90, builder: raynman)"
+
+  - id: clamav.update.done
+    title: "Update finished ({{ mirror }})"
+    match:
+      fields: {event: db_update_done}
+    extract: [signatures, mirror]
+    template: freshclam finished updating from {{ mirror }}; the database now has {{ signatures | thousands }} signatures.
+    category: info
+    tags: [update]
+    severity_override: info
+    examples:
+      - line: "Wed Nov 18 18:36:46 2026 -> Database updated (8721665 signatures) from database.clamav.net (IP: 104.16.218.84)"
+        expect:
+          text: >-
+            freshclam finished updating from database.clamav.net; the database now has 8,721,665
+            signatures.
+    counter_examples:
+      - "Wed Nov 18 15:36:47 2026 -> daily.cld updated (version: 28187, sigs: 2074152, f-level: 90, builder: raynman)"
+
+  - id: clamav.update.clamd_notified
+    title: clamd told to reload
+    match:
+      fields: {event: clamd_notified}
+    template: freshclam told the running clamd to load the new signatures.
+    category: info
+    severity_override: info
+    examples:
+      - line: "Wed Nov 18 15:36:47 2026 -> Clamd successfully notified about the update."
+        expect:
+          text: freshclam told the running clamd to load the new signatures.
+    counter_examples:
+      - "Wed Nov 18 18:36:47 2026 -> Clamd was NOT notified: Can't connect to clamd through /var/run/clamav/clamd.ctl: No such file or directory"
+
+  - id: clamav.update.dns_failed
+    title: "Update check failed: {{ host }}"
+    match:
+      regex: Can't query (?P<host>\S+)
+    template: freshclam could not look up the latest signature versions via DNS ({{ host }}); it will try over HTTP instead.
+    cause: The DNS server cannot resolve TXT records, or outbound DNS is blocked.
+    action: Usually harmless if the HTTP download that follows succeeds. If updates keep failing, test "dig TXT {{ host | shquote }}".
+    category: availability
+    tags: [update_failure]
+    severity_override: warning
+    examples:
+      - line: "Wed Nov 18 17:36:46 2026 -> ^Can't query current.cvd.clamav.net"
+        expect:
+          text: >-
+            freshclam could not look up the latest signature versions via DNS
+            (current.cvd.clamav.net); it will try over HTTP instead.
+    counter_examples:
+      - "Wed Nov 18 17:36:46 2026 -> ^Invalid DNS reply. Falling back to HTTP mode."
+
+  - id: clamav.update.download_failed
+    title: "Download failed: {{ file }}"
+    match:
+      regex: Can't download (?P<file>\S+) from (?P<url>\S+)
+    template: freshclam could not download {{ file }} from {{ url }}.
+    cause: No internet access from this machine, a proxy or firewall blocking it, or the mirror is temporarily unavailable.
+    action: Test with "curl -I {{ url | shquote }}". If you use a proxy, set HTTPProxyServer/HTTPProxyPort in freshclam.conf.
+    category: availability
+    tags: [update_failure]
+    severity_override: error
+    examples:
+      - line: "Wed Nov 18 17:36:50 2026 -> !Can't download daily.cvd from https://database.clamav.net/daily.cvd"
+        expect:
+          text: freshclam could not download daily.cvd from https://database.clamav.net/daily.cvd.
+    counter_examples:
+      - "Wed Nov 18 17:36:50 2026 -> !Update failed for database: daily"
+
+  - id: clamav.update.db_failed
+    title: "Update failed: {{ database }}"
+    match:
+      regex: Update failed for database:\s*(?P<database>\S+)
+    template: The {{ database }} signature database was not updated; ClamAV keeps using the older copy.
+    action: Look at the freshclam lines just above for the reason (download, DNS or rate limit).
+    category: availability
+    tags: [update_failure]
+    severity_override: error
+    examples:
+      - line: "Wed Nov 18 17:36:50 2026 -> !Update failed for database: daily"
+        expect:
+          text: The daily signature database was not updated; ClamAV keeps using the older copy.
+    counter_examples:
+      - "Wed Nov 18 17:36:50 2026 -> ERROR: Update failed."
+
+  - id: clamav.update.process_failed
+    title: Signature update failed
+    match:
+      regex: Database update process failed:\s*(?P<reason>.+)
+    template: "The whole signature update failed: {{ reason }}."
+    cause: Most often no network access to database.clamav.net (DNS, firewall, proxy) or a rate limit from the ClamAV servers.
+    action: Run "sudo freshclam --verbose" to see the failing step; check the machine's internet and proxy settings.
+    category: availability
+    tags: [update_failure]
+    severity_override: error
+    examples:
+      - line: "Wed Nov 18 17:36:50 2026 -> ERROR: Database update process failed: Connection failed"
+        expect:
+          text: "The whole signature update failed: Connection failed."
+    counter_examples:
+      - "Wed Nov 18 17:36:50 2026 -> ERROR: Update failed."
+
+  - id: clamav.update.rate_limited
+    title: Update server rate limit
+    match:
+      regex: '(?i)received error code 429|on cool-?down until(?: after)?:?\s*(?P<until>.+)?'
+    template: >-
+      The ClamAV update servers are refusing downloads from this machine because it asked too
+      often{% if until %}; it will retry after {{ until }}{% endif %}.
+    cause: freshclam runs more often than allowed (more than about once an hour), or many machines share one public IP.
+    action: Set "Checks 12" or lower in freshclam.conf, or run a local mirror (cvdupdate) for many machines.
+    category: configuration
+    tags: [update_failure]
+    severity_override: warning
+    references: ["https://docs.clamav.net/faq/faq-cvd.html"]
+    examples:
+      - line: "Wed Nov 18 19:00:00 2026 -> WARNING: FreshClam received error code 429 from the ClamAV Content Delivery Network (CDN)."
+        expect:
+          text: >-
+            The ClamAV update servers are refusing downloads from this machine because it asked too
+            often.
+      - line: "Wed Nov 18 19:00:00 2026 -> WARNING: You are on cool-down until after: 2026-11-18 21:00:00"
+        expect:
+          text: >-
+            The ClamAV update servers are refusing downloads from this machine because it asked too
+            often; it will retry after 2026-11-18 21:00:00.
+    counter_examples:
+      - "Wed Nov 18 17:36:50 2026 -> ERROR: Database update process failed: Connection failed"
+
+  - id: clamav.update.mirror_not_synced
+    title: Update mirror lagging
+    match:
+      regex: Mirror (?P<mirror>\S+) is not synchroni[sz]ed
+    template: The update mirror {{ mirror }} still had older signatures than announced; freshclam will retry.
+    action: Harmless if it happens now and then; only act if updates stay stale for more than a day.
+    category: availability
+    tags: [update_failure]
+    severity_override: notice
+    examples:
+      - line: "Wed Nov 18 18:36:46 2026 -> ^Mirror https://database.clamav.net is not synchronized."
+        expect:
+          text: The update mirror https://database.clamav.net still had older signatures than announced; freshclam will retry.
+    counter_examples:
+      - "Wed Nov 18 17:36:46 2026 -> ^Can't query current.cvd.clamav.net"
+
+  - id: clamav.update.engine_outdated
+    title: ClamAV program is outdated
+    match:
+      regex: Your ClamAV installation is OUTDATED
+    template: The ClamAV program itself is older than the version ClamAV recommends; signatures still update, but newer detections may need a newer engine.
+    action: Upgrade the clamav packages (e.g. "sudo apt upgrade clamav clamav-daemon clamav-freshclam").
+    category: security
+    severity_override: warning
+    examples:
+      - line: "Wed Nov 18 18:36:45 2026 -> WARNING: Your ClamAV installation is OUTDATED!"
+        expect:
+          text: >-
+            The ClamAV program itself is older than the version ClamAV recommends; signatures still
+            update, but newer detections may need a newer engine.
+    counter_examples:
+      - "Wed Nov 18 18:36:45 2026 -> WARNING: Local version: 1.0.7 Recommended version: 1.4.3"
+
+  - id: clamav.update.engine_versions
+    title: "ClamAV {{ local }} installed, {{ recommended }} recommended"
+    match:
+      regex: Local version:\s*(?P<local>\S+)\s+Recommended version:\s*(?P<recommended>\S+)
+    template: This machine runs ClamAV {{ local }}; the current recommended version is {{ recommended }}.
+    category: security
+    severity_override: warning
+    examples:
+      - line: "Wed Nov 18 18:36:45 2026 -> WARNING: Local version: 1.0.7 Recommended version: 1.4.3"
+        expect:
+          text: This machine runs ClamAV 1.0.7; the current recommended version is 1.4.3.
+    counter_examples:
+      - "Wed Nov 18 18:36:45 2026 -> WARNING: Your ClamAV installation is OUTDATED!"
+
+  - id: clamav.update.download_error
+    title: "Update download failed: {{ reason }}"
+    match:
+      regex: 'Download failed \((?P<code>\d+)\).*?Message:\s*(?P<reason>\S.*?)\s*$'
+    template: "freshclam could not download from the update server: {{ reason }}."
+    cause: No DNS or internet from this machine, a firewall or proxy in the way, or a wrong DatabaseMirror in freshclam.conf.
+    action: Check DNS and internet access from this host, and the DatabaseMirror / proxy settings in freshclam.conf.
+    category: availability
+    severity_override: error
+    tags: [update_failure]
+    examples:
+      - line: "ERROR: Thu Nov 19 08:26:15 2026 -> remote_cvdhead: Download failed (6) ERROR: Thu Nov 19 08:26:15 2026 ->  Message: Could not resolve hostname"
+        expect:
+          text: "freshclam could not download from the update server: Could not resolve hostname."
+    counter_examples:
+      - "ERROR: Thu Nov 19 08:26:15 2026 -> Update failed for database: daily"
+
+  - id: clamav.update.version_check_failed
+    title: "Cannot check {{ database }} version"
+    match:
+      regex: Failed to get (?P<database>\w+) database version information from server:\s*(?P<server>\S+)
+    template: freshclam could not ask {{ server }} which version of the {{ database }} signatures is current.
+    action: Check that this host can reach {{ server | shquote }}; the reason is usually in the line just above.
+    category: availability
+    severity_override: warning
+    tags: [update_failure]
+    examples:
+      - line: "WARNING: Thu Nov 19 08:26:15 2026 -> Failed to get daily database version information from server: https://database.example.invalid"
+        expect:
+          text: >-
+            freshclam could not ask https://database.example.invalid which version of the daily
+            signatures is current.
+    counter_examples:
+      - "ERROR: Thu Nov 19 08:26:15 2026 -> Update failed for database: daily"

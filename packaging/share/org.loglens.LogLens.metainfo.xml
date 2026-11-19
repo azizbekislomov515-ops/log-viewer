@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.loglens.LogLens</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>LogLens</name>
+  <summary>See every service's logs and what they mean</summary>
+  <developer id="org.loglens">
+    <name>LogLens contributors</name>
+  </developer>
+  <description>
+    <p>
+      LogLens finds the logs on your Linux computer (systemd services, Docker containers
+      and Compose projects, and log files such as Squid, ClamAV and nginx), shows each
+      service's logs live and separately, and explains in plain language what is happening:
+      what an entry means, its probable cause and what to do next.
+    </p>
+    <ul>
+      <li>Live, searchable logs per service, smooth with millions of lines</li>
+      <li>Plain-language explanations from tested rule packs, no AI or network needed</li>
+      <li>Per-service overview: error spikes, top clients and domains, restarts, health</li>
+      <li>A dashboard for Docker Compose projects</li>
+      <li>Passwords, tokens and keys are removed before anything is stored</li>
+      <li>Works offline; never needs root</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.loglens.LogLens.desktop</launchable>
+  <provides>
+    <binary>loglens</binary>
+    <binary>loglens-cli</binary>
+  </provides>
+  <categories>
+    <category>System</category>
+    <category>Monitor</category>
+  </categories>
+  <keywords>
+    <keyword>logs</keyword>
+    <keyword>journald</keyword>
+    <keyword>docker</keyword>
+    <keyword>syslog</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-11-19">
+      <description>
+        <p>First release: discovery, live logs, explanations, overviews, redaction and the
+        read-only helper.</p>
+      </description>
+    </release>
+  </releases>
+</component>

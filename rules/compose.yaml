@@ -1,0 +1,397 @@
+# Docker Compose CLI output (`docker compose up / pull / build`), e.g. from a
+# docker-compose@<project>.service unit or a saved log. No parser claims these lines; rules
+# match the message text.
+pack: compose
+version: 1
+description: Docker Compose project start-up, build and configuration problems.
+example_source: file:/var/log/docker-compose.log
+applies_to:
+  units: ["docker-compose*.service", "*compose*.service"]
+  paths: ["*compose*"]
+  programs: [docker-compose, compose]
+
+overview:
+  cards:
+    - {title: Dependency problems, kind: recent, when: {tags: [dependency]}, limit: 6, empty: None.}
+    - {title: Configuration and build errors, kind: recent, when: {tags: [config, build]}, limit: 6,
+       warn_at: 1, empty: None.}
+
+rules:
+  # ---------------------------------------------------------------- start-up order
+  - id: compose.dependency.waiting
+    title: "Waiting for {{ container }}"
+    match:
+      regex: Container (?P<container>\S+)\s+Waiting\s*$
+    template: Compose is holding back other services until {{ container }} is ready (depends_on with a condition).
+    category: info
+    tags: [dependency]
+    severity_override: info
+    examples:
+      - line: " Container shop-db-1  Waiting"
+        expect:
+          text: Compose is holding back other services until shop-db-1 is ready (depends_on with a condition).
+    counter_examples:
+      - " Container shop-db-1  Healthy"
+
+  - id: compose.dependency.healthy
+    title: "{{ container }} is healthy"
+    match:
+      regex: Container (?P<container>\S+)\s+Healthy\s*$
+    template: "{{ container }} passed its health check; services that depend on it can start now."
+    category: availability
+    severity_override: info
+    examples:
+      - line: " ✔ Container shop-db-1  Healthy"
+        expect:
+          text: shop-db-1 passed its health check; services that depend on it can start now.
+    counter_examples:
+      - " Container shop-db-1  Waiting"
+
+  - id: compose.container.started
+    title: "{{ container }} started"
+    match:
+      regex: Container (?P<container>\S+)\s+Started\s*$
+    template: Compose started the container {{ container }}.
+    category: availability
+    severity_override: info
+    tags: [restart]
+    examples:
+      - line: " ✔ Container shop-web-1  Started"
+        expect:
+          text: Compose started the container shop-web-1.
+    counter_examples:
+      - " ✔ Container shop-web-1  Created"
+
+  - id: compose.dependency.unhealthy
+    title: "Dependency unhealthy: {{ container }}"
+    match:
+      regex: dependency failed to start:\s*container (?P<container>\S+) is unhealthy
+    template: Compose did not start the services that depend on {{ container }}, because {{ container }} never passed its health check.
+    cause: The service in {{ container }} is failing or slow to start, or its healthcheck test or timing is wrong.
+    action: Check "docker compose logs {{ container | shquote }}" and its healthcheck (test, interval, retries, start_period).
+    category: availability
+    tags: [dependency]
+    severity_override: error
+    examples:
+      - line: "dependency failed to start: container shop-db-1 is unhealthy"
+        expect:
+          text: >-
+            Compose did not start the services that depend on shop-db-1, because shop-db-1 never
+            passed its health check.
+    counter_examples:
+      - "dependency failed to start: container shop-migrate-1 exited (1)"
+
+  - id: compose.dependency.exited
+    title: "Dependency failed: {{ container }}"
+    match:
+      regex: dependency failed to start:\s*container (?P<container>\S+) exited \((?P<code>\d+)\)
+    template: Compose did not start the services that depend on {{ container }}, because {{ container }} stopped with exit code {{ code }}.
+    action: See why it failed with "docker compose logs {{ container | shquote }}".
+    category: availability
+    tags: [dependency]
+    severity_override: error
+    examples:
+      - line: "dependency failed to start: container shop-migrate-1 exited (1)"
+        expect:
+          text: >-
+            Compose did not start the services that depend on shop-migrate-1, because
+            shop-migrate-1 stopped with exit code 1.
+    counter_examples:
+      - "dependency failed to start: container shop-db-1 is unhealthy"
+
+  - id: compose.container.exited
+    title: "{{ container }} exited ({{ code }})"
+    match:
+      regex: ^(?P<container>\S+) exited with code (?P<code>\d+)\s*$
+    template: >-
+      The container {{ container }} stopped with exit code {{ code }}{% if code == "0" %} (finished
+      normally){% elif code == "137" %} (killed, often out of memory){% elif code == "143" %}
+      (asked to stop){% else %} (an error){% endif %}.
+    action: "{% if code != '0' and code != '143' %}Check its last output: docker compose logs --tail 50 {{ container | shquote }}{% endif %}"
+    category: availability
+    tags: [exit]
+    severity_override: warning
+    examples:
+      - line: "shop-web-1 exited with code 1"
+        expect:
+          text: The container shop-web-1 stopped with exit code 1 (an error).
+          action: "Check its last output: docker compose logs --tail 50 shop-web-1"
+      - line: "shop-web-1 exited with code 143"
+        expect:
+          text: The container shop-web-1 stopped with exit code 143 (asked to stop).
+    counter_examples:
+      - "Attaching to shop-db-1, shop-web-1"
+
+  # ---------------------------------------------------------------- ports and names
+  - id: compose.ports.allocated
+    title: "Port {{ port }} already in use"
+    match:
+      regex: endpoint (?P<container>\S+) .*Bind for (?P<address>\S+?):(?P<port>\d+) failed:? port is already allocated
+    template: "{{ container }} could not start because host port {{ port }} is already published by another container."
+    action: Find it with "docker ps --filter publish={{ port | shquote }}", stop it, or change the left side of "{{ port | shquote }}:..." under ports in the compose file.
+    category: configuration
+    severity_override: error
+    examples:
+      - line: "Error response from daemon: driver failed programming external connectivity on endpoint shop-web-1 (5b2c9a7e): Bind for 0.0.0.0:8080 failed: port is already allocated"
+        expect:
+          text: shop-web-1 could not start because host port 8080 is already published by another container.
+    counter_examples:
+      - "Error response from daemon: driver failed programming external connectivity on endpoint shop-web-1 (5b2c9a7e): Error starting userland proxy: listen tcp4 0.0.0.0:8080: bind: address already in use"
+
+  - id: compose.ports.address_in_use
+    title: "Port {{ port }} used by a host program"
+    match:
+      regex: 'endpoint (?P<container>\S+) .*listen tcp\d? (?P<address>\S+?):(?P<port>\d+): bind:? address already in use'
+    template: "{{ container }} could not start because a program on the host (not a container) already listens on port {{ port }}."
+    action: "Find it with: sudo ss -ltnp | grep :{{ port | shquote }} then stop it or change the host port in the compose file."
+    category: configuration
+    severity_override: error
+    examples:
+      - line: "Error response from daemon: driver failed programming external connectivity on endpoint shop-web-1 (5b2c9a7e): Error starting userland proxy: listen tcp4 0.0.0.0:8080: bind: address already in use"
+        expect:
+          text: >-
+            shop-web-1 could not start because a program on the host (not a container) already
+            listens on port 8080.
+    counter_examples:
+      - "Error response from daemon: driver failed programming external connectivity on endpoint shop-web-1 (5b2c9a7e): Bind for 0.0.0.0:8080 failed: port is already allocated"
+
+  - id: compose.container.name_conflict
+    title: "Name already taken: {{ name }}"
+    match:
+      regex: The container name "/?(?P<name>[^"]+)" is already in use by container "(?P<other>[0-9a-f]+)"
+    template: Compose could not create {{ name }} because a container with that name already exists (ID {{ other[:12] }}), probably from an earlier run or another project.
+    action: Remove the old one ("docker rm -f {{ name | shquote }}") or give this project a different name (-p / name:).
+    category: configuration
+    severity_override: error
+    examples:
+      - line: 'Error response from daemon: Conflict. The container name "/shop-db-1" is already in use by container "9f1c2d3e4b5a6c7d8e9f". You have to remove (or rename) that container to be able to reuse that name.'
+        expect:
+          text: >-
+            Compose could not create shop-db-1 because a container with that name already exists
+            (ID 9f1c2d3e4b5a), probably from an earlier run or another project.
+    counter_examples:
+      - "WARN[0000] Found orphan containers ([shop-old-1]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up."
+
+  - id: compose.project.orphans
+    title: "Leftover containers: {{ containers }}"
+    match:
+      regex: Found orphan containers \(\[(?P<containers>[^\]]*)\]\)
+    template: The project still has containers ({{ containers }}) for services that are no longer in the compose file.
+    action: Run "docker compose up -d --remove-orphans" to delete them, if they are no longer needed.
+    category: configuration
+    severity_override: warning
+    examples:
+      - line: "WARN[0000] Found orphan containers ([shop-old-1]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up."
+        expect:
+          text: >-
+            The project still has containers (shop-old-1) for services that are no longer in the
+            compose file.
+    counter_examples:
+      - 'Error response from daemon: Conflict. The container name "/shop-db-1" is already in use by container "9f1c2d3e4b5a6c7d8e9f". You have to remove (or rename) that container to be able to reuse that name.'
+
+  # ---------------------------------------------------------------- variables
+  - id: compose.env.required_missing
+    title: "Required variable missing: {{ var }}"
+    match:
+      regex: 'required variable (?P<var>\w+) is missing a value(?::\s*(?P<hint>.+))?'
+    template: >-
+      Compose stopped because the variable {{ var }} has no value, and the compose file says it is
+      required{% if hint %} ("{{ hint }}"){% endif %}.
+    action: Set {{ var | shquote }} in the .env file next to the compose file, or export it before running docker compose.
+    category: configuration
+    tags: [config]
+    severity_override: error
+    examples:
+      - line: "error while interpolating services.db.environment.POSTGRES_PASSWORD: required variable DB_PASSWORD is missing a value: set DB_PASSWORD in .env"
+        expect:
+          text: >-
+            Compose stopped because the variable DB_PASSWORD has no value, and the compose file says
+            it is required ("set DB_PASSWORD in .env").
+    counter_examples:
+      - 'WARN[0000] The "DB_PASSWORD" variable is not set. Defaulting to a blank string.'
+
+  - id: compose.env.not_set
+    title: "Variable not set: {{ var }}"
+    match:
+      regex: The "(?P<var>\w+)" variable is not set\. Defaulting to a blank string
+    template: The compose file uses ${{ '{' }}{{ var }}{{ '}' }}, but {{ var }} is not set, so an empty value was used instead.
+    cause: A missing or misnamed .env file, or the variable was never exported.
+    action: Add {{ var | shquote }}=... to the .env file in the project directory; an empty value can break passwords, ports or image tags.
+    category: configuration
+    tags: [config]
+    severity_override: warning
+    examples:
+      - line: 'WARN[0000] The "DB_PASSWORD" variable is not set. Defaulting to a blank string.'
+        expect:
+          text: >-
+            The compose file uses ${DB_PASSWORD}, but DB_PASSWORD is not set, so an empty value was
+            used instead.
+    counter_examples:
+      - "error while interpolating services.db.environment.POSTGRES_PASSWORD: required variable DB_PASSWORD is missing a value: set DB_PASSWORD in .env"
+
+  # ---------------------------------------------------------------- compose file
+  - id: compose.file.version_obsolete
+    title: Obsolete "version" line
+    match:
+      regex: (?<!\S)(?P<file>\S+?):? the attribute `version` is obsolete
+    template: The compose file {{ file }} has a "version:" line, which current Compose ignores. Harmless.
+    action: Delete the "version:" line from {{ file | shquote }} to silence this warning.
+    category: configuration
+    severity_override: info
+    examples:
+      - line: "WARN[0000] /srv/shop/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+        expect:
+          text: >-
+            The compose file /srv/shop/docker-compose.yml has a "version:" line, which current Compose
+            ignores. Harmless.
+    counter_examples:
+      - "no configuration file provided: not found"
+
+  - id: compose.file.not_found
+    title: No compose file
+    match:
+      regex: no configuration file provided:\s*not found
+    template: docker compose found no compose.yaml / docker-compose.yml in the directory it ran from.
+    action: Run it from the project directory, or point to the file with "docker compose -f /path/to/compose.yaml".
+    category: configuration
+    tags: [config]
+    severity_override: error
+    examples:
+      - line: "no configuration file provided: not found"
+        expect:
+          text: docker compose found no compose.yaml / docker-compose.yml in the directory it ran from.
+    counter_examples:
+      - "WARN[0000] /srv/shop/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+
+  - id: compose.file.yaml_error
+    title: "Compose file syntax error (line {{ line }})"
+    match:
+      regex: 'yaml: line (?P<line>\d+): (?P<problem>.+)'
+    template: "The compose file is not valid YAML at line {{ line }}: {{ problem }}."
+    cause: Usually wrong indentation, a tab character, or a value with ":" that needs quotes.
+    action: Fix line {{ line | shquote }} (and the line above it), then check with "docker compose config".
+    category: configuration
+    tags: [config]
+    severity_override: error
+    examples:
+      - line: "yaml: line 12: mapping values are not allowed in this context"
+        expect:
+          text: "The compose file is not valid YAML at line 12: mapping values are not allowed in this context."
+    counter_examples:
+      - "validating /srv/shop/compose.yaml: services.web.ports.0 must be a string or number"
+
+  - id: compose.file.invalid
+    title: "Invalid setting: {{ where }}"
+    match:
+      regex: 'validating (?P<file>\S+?):\s*(?P<where>\S+) (?P<problem>.+)'
+    template: "{{ file }} has an invalid value at {{ where }}: it {{ problem }}."
+    action: Fix {{ where | shquote }} in {{ file | shquote }}; "docker compose config" shows the parsed result.
+    category: configuration
+    tags: [config]
+    severity_override: error
+    examples:
+      - line: "validating /srv/shop/compose.yaml: services.web.ports.0 must be a string or number"
+        expect:
+          text: "/srv/shop/compose.yaml has an invalid value at services.web.ports.0: it must be a string or number."
+    counter_examples:
+      - "yaml: line 12: mapping values are not allowed in this context"
+
+  - id: compose.file.undefined_service
+    title: "Unknown dependency: {{ dependency }}"
+    match:
+      regex: service "(?P<service>[^"]+)" depends on undefined service "?(?P<dependency>[^":]+)"?
+    template: The service {{ service }} lists {{ dependency }} under depends_on, but there is no service called {{ dependency }}.
+    action: Fix the name under depends_on of {{ service | shquote }} (check spelling), or add the {{ dependency | shquote }} service.
+    category: configuration
+    tags: [config]
+    severity_override: error
+    examples:
+      - line: 'service "web" depends on undefined service "db": invalid compose project'
+        expect:
+          text: >-
+            The service web lists db under depends_on, but there is no service called db.
+    counter_examples:
+      - "dependency failed to start: container shop-db-1 is unhealthy"
+
+  # ---------------------------------------------------------------- build and pull
+  - id: compose.build.step_failed
+    title: "Build step failed (exit {{ code }})"
+    match:
+      regex: 'failed to solve: process "(?P<step>(?:[^"\\]|\\.)*)" did not complete successfully: exit code: (?P<code>\d+)'
+    template: Building the image failed because the Dockerfile command "{{ step }}" exited with code {{ code }}.
+    action: Scroll up in the build output for that step's own error (a failed download, a missing package, a test failure).
+    category: configuration
+    tags: [build]
+    severity_override: error
+    examples:
+      - line: 'failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code: 1'
+        expect:
+          text: Building the image failed because the Dockerfile command "/bin/sh -c npm ci" exited with code 1.
+    counter_examples:
+      - "failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory"
+
+  - id: compose.build.dockerfile_missing
+    title: Dockerfile not found
+    match:
+      regex: 'failed to read dockerfile: open (?P<file>\S+): no such file or directory'
+    template: The build could not find {{ file }} in the build context directory.
+    action: Check "build.context" and "build.dockerfile" for this service in the compose file.
+    category: configuration
+    tags: [build]
+    severity_override: error
+    examples:
+      - line: "failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory"
+        expect:
+          text: The build could not find Dockerfile in the build context directory.
+    counter_examples:
+      - 'failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code: 1'
+
+  - id: compose.build.context_missing
+    title: "Build folder missing: {{ path }}"
+    match:
+      regex: unable to prepare context:\s*path "(?P<path>[^"]+)" not found
+    template: The build folder {{ path }} given for a service does not exist.
+    action: Fix "build:" (or build.context) for that service; paths are relative to the compose file.
+    category: configuration
+    tags: [build]
+    severity_override: error
+    examples:
+      - line: 'unable to prepare context: path "./api" not found'
+        expect:
+          text: The build folder ./api given for a service does not exist.
+    counter_examples:
+      - "failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory"
+
+  - id: compose.pull.denied
+    title: "Cannot pull image {{ image }}"
+    match:
+      regex: pull access denied for (?P<image>[^,\s]+)
+    template: Compose could not download the image {{ image }}; it does not exist in the registry or needs a login.
+    cause: A typo in "image:", a private image without "docker login", or a service that should be built locally (add "build:").
+    action: Check the image name; for a private registry run "docker login" first.
+    category: configuration
+    severity_override: error
+    examples:
+      - line: " ✘ api Error pull access denied for shop-api, repository does not exist or may require 'docker login': denied: requested access to the resource is denied"
+        expect:
+          text: Compose could not download the image shop-api; it does not exist in the registry or needs a login.
+    counter_examples:
+      - " ✔ Container shop-web-1  Started"
+
+  - id: compose.network.label_mismatch
+    title: "Network belongs elsewhere: {{ network }}"
+    match:
+      regex: network (?P<network>\S+) was found but has incorrect label
+    template: The network {{ network }} already exists but was not created by this Compose project, so Compose will not use it.
+    action: >-
+      If nothing else uses it, remove it ("docker network rm {{ network | shquote }}"); otherwise mark it "external: true" in the compose file.
+    category: configuration
+    severity_override: error
+    examples:
+      - line: 'network shop_default was found but has incorrect label com.docker.compose.network set to ""'
+        expect:
+          text: >-
+            The network shop_default already exists but was not created by this Compose project, so
+            Compose will not use it.
+    counter_examples:
+      - " ✔ Network shop_default  Created"

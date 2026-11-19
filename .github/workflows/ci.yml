@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.5"
+  QT_QPA_PLATFORM: offscreen
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  lint:
+    name: Lint, types, rules, security
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --frozen
+      - name: ruff
+        run: uv run ruff check src tests tools && uv run ruff format --check src tests tools
+      - name: mypy (strict)
+        run: uv run mypy
+      - name: Rule packs
+        run: uv run loglens-cli rules lint && uv run loglens-cli rules test
+      - name: bandit
+        run: uv run bandit -q -c pyproject.toml -r src
+      - name: pip-audit
+        run: uv run pip-audit --progress-spinner off
+
+  test:
+    name: Tests (${{ matrix.image }}, Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "ubuntu:24.04", "debian:12"]
+        python: ["3.12", "3.13"]
+    steps:
+      - name: git for checkout
+        run: apt-get update -qq && apt-get install -y -qq git ca-certificates >/dev/null
+      - uses: actions/checkout@v4
+      - name: Unit and offscreen GUI tests (as an unprivileged user)
+        run: bash ci/test-in-container.sh "${{ matrix.python }}"
+
+  integration:
+    name: Integration (Docker, journald)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: ci/install-system-deps.sh
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --frozen
+      - name: Local images the tests use (they never pull)
+        run: docker pull alpine:latest
+      - name: Integration tests
+        run: |
+          sudo usermod -aG systemd-journal "$USER" || true
+          uv run pytest -m integration -p no:cacheprovider -rs
+
+  perf:
+    name: Performance (informational)
+    runs-on: ubuntu-24.04
+    continue-on-error: true  # shared runners have noisy timing
+    steps:
+      - uses: actions/checkout@v4
+      - run: ci/install-system-deps.sh
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --frozen
+      - run: uv run pytest -m perf -p no:cacheprovider -s
+      - run: uv run python tools/perf.py startup --runs 5
+
+  package:
+    name: Build packages (smoke)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq fakeroot >/dev/null
+      - run: packaging/deb/build-deb.sh
+      - name: Install the .deb in a fresh Ubuntu 24.04 and run the QA checklist
+        run: docker run --rm -v "$PWD/dist:/dist" -v "$PWD/packaging/qa:/qa:ro" ubuntu:24.04 bash /qa/qa-deb.sh

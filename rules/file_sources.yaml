@@ -1,0 +1,55 @@
+# Well-known log files LogLens looks for.
+#
+# Each group becomes one ServiceGroup (id "files:<id>").
+# Each file lists candidate paths across distros; the first one that exists wins.
+version: 1
+groups:
+  - id: squid
+    name: Squid proxy
+    files:
+      - name: Squid access log
+        paths: [/var/log/squid/access.log, /var/log/squid3/access.log]
+      - name: Squid cache log
+        paths: [/var/log/squid/cache.log, /var/log/squid3/cache.log]
+
+  - id: clamav
+    name: ClamAV antivirus
+    files:
+      - name: clamd log
+        paths: [/var/log/clamav/clamd.log, /var/log/clamav/clamav.log, /var/log/clamd.scan]
+      - name: freshclam log
+        paths: [/var/log/clamav/freshclam.log, /var/log/freshclam.log]
+
+  - id: nginx
+    name: Nginx
+    files:
+      - name: Nginx access log
+        paths: [/var/log/nginx/access.log]
+      - name: Nginx error log
+        paths: [/var/log/nginx/error.log]
+
+  - id: auth
+    name: Authentication
+    files:
+      - name: Auth log
+        paths: [/var/log/auth.log, /var/log/secure]
+
+  - id: syslog
+    name: System log
+    files:
+      - name: Syslog
+        paths: [/var/log/syslog, /var/log/messages]
+      - name: Kernel log
+        paths: [/var/log/kern.log]
+
+  - id: fail2ban
+    name: Fail2ban
+    files:
+      - name: Fail2ban log
+        paths: [/var/log/fail2ban.log]
+
+  - id: ufw
+    name: UFW firewall
+    files:
+      - name: UFW log
+        paths: [/var/log/ufw.log]

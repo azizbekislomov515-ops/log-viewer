@@ -1,0 +1,34 @@
+{"fields": {"kid": "kid1"}, "message": "Set Current Directory to /var/spool/squid", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Starting Squid Cache version 6.6 for x86_64-pc-linux-gnu...", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Service Name: squid", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Process ID 1450", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Process Roles: worker", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "With 1024 file descriptors available", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Initializing IP Cache...", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "DNS IPv6 socket created at [::], FD 8", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "DNS IPv4 socket created at 0.0.0.0, FD 9", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Adding nameserver 127.0.0.53 from /etc/resolv.conf", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Logfile: opening log daemon:/var/log/squid/access.log", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1", "level": "WARNING"}, "message": "WARNING: Could not determine this machines public hostname. Please configure one or set 'visible_hostname'.", "parsed": true, "parser": "squid", "severity": "WARNING", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Store logging disabled", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Swap maxSize 0 + 262144 KB, estimated 20164 objects", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Using Least Load store dir selection", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Accepting HTTP Socket connections at conn3 local=[::]:3128 remote=[::] FD 12 flags=9", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "storeLateRelease: released 0 objects", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:50:02+00:00"}
+{"fields": {"kid": "kid1", "level": "ERROR"}, "message": "ERROR: failure while accepting a TLS connection on conn3 local=[::]:3128 remote=[::] FD 12 flags=9: SQUID_TLS_ERR_ACCEPT+TLS_LIB_ERR=1408F09C+TLS_IO_ERR=1", "parsed": true, "parser": "squid", "severity": "ERROR", "ts": "2026-11-17T22:51:10+00:00"}
+{"fields": {"kid": "kid1", "level": "WARNING"}, "message": "WARNING! Your cache is running out of filedescriptors", "parsed": true, "parser": "squid", "severity": "WARNING", "ts": "2026-11-17T22:52:00+00:00"}
+{"fields": {"kid": "kid1", "level": "ERROR", "lines": 2}, "message": "ERROR: Connection to 10.0.5.20 failed\n    connection: conn12345 local=10.0.0.2:51234 remote=10.0.5.20:80 FD 31 flags=1", "parsed": true, "parser": "squid", "severity": "ERROR", "ts": "2026-11-17T22:53:15+00:00"}
+{"fields": {"kid": "kid1", "level": "SECURITY ALERT"}, "message": "SECURITY ALERT: Host header forgery detected on conn44 local=10.0.0.2:3128 remote=10.0.0.9:50122 FD 20 flags=1 (local IP does not match any domain IP)", "parsed": true, "parser": "squid", "severity": "WARNING", "ts": "2026-11-17T22:54:00+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Logfile: opening log daemon:/var/log/squid/access.log", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:55:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Reconfiguring Squid Cache (version 6.6)...", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:55:01+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Closing HTTP(S) port [::]:3128", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:55:01+00:00"}
+{"fields": {"kid": "kid1", "level": "FATAL"}, "message": "FATAL: Unable to open configuration file: /etc/squid/squid.conf: (2) No such file or directory", "parsed": true, "parser": "squid", "severity": "CRITICAL", "ts": "2026-11-17T22:56:30+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Squid Cache (Version 6.6): Terminated abnormally.", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:56:30+00:00"}
+{"fields": {}, "message": "Squid Cache (Version 3.5.27): Exiting normally.", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:57:00+00:00"}
+{"fields": {"kid": "kid1"}, "message": "5,2| comm.cc(123) commHandleWrite: write() failed", "parsed": true, "parser": "squid", "severity": "ERROR", "ts": "2026-11-17T22:57:30+00:00"}
+{"fields": {"kid": "kid2", "level": "BUG 3279"}, "message": "BUG 3279: HTTP reply without Date:", "parsed": true, "parser": "squid", "severity": "ERROR", "ts": "2026-11-17T22:58:00+00:00"}
+{"fields": {"kid": "kid1"}, "message": "Squid plugin modules loaded: 0", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-17T22:59:00+00:00"}
+{"fields": {"bad_timestamp": "2026/13/45 25:61:00", "kid": "kid1"}, "message": "impossible date", "parsed": true, "parser": "squid", "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "2026/11/17 kid1| no time", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "kid1| no stamp at all", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
+{"fields": {}, "message": "just some text", "parsed": false, "parser": null, "severity": "INFO", "ts": "2026-11-18T12:00:00+00:00"}
