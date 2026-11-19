@@ -179,7 +179,7 @@ def build_report(
         key_fields=key_fields or KEY_FIELDS,
         thresholds=thresholds,
     )
-    timeline = _timeline(histogram, start, now, bucket, thresholds)
+    timeline = timeline_buckets(histogram, start, now, bucket, thresholds)
     health = _health(
         sources,
         entries,
@@ -263,13 +263,14 @@ def _thresholds(packs: Sequence[Pack]) -> Thresholds:
     return Thresholds(z or default.spike_z, n or default.spike_min_errors)
 
 
-def _timeline(
+def timeline_buckets(
     histogram: Iterable[tuple[datetime, Severity, int]],
     start: datetime,
     end: datetime,
     bucket: timedelta,
     thresholds: Thresholds,
 ) -> tuple[Bucket, ...]:
+    """Histogram rows as ``bucket``-long bars over ``[start, end]``, spikes marked."""
     count = max(1, int((end - start) / bucket + 0.999))
     first = start
     totals = [[0, 0, 0, 0] for _ in range(count)]

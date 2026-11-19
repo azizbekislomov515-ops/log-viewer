@@ -214,7 +214,7 @@ def test_applicable_packs_and_card_kinds(engine: ExplanationEngine) -> None:
 
 def test_timeline_marks_spikes() -> None:
     from loglens.explain.insights import Thresholds  # noqa: PLC0415
-    from loglens.explain.overview import _timeline  # noqa: PLC0415
+    from loglens.explain.overview import timeline_buckets  # noqa: PLC0415
 
     start = NOW - timedelta(minutes=20)
     hist = [(start + timedelta(minutes=m), Severity.ERROR, 1) for m in range(19)]
@@ -222,7 +222,7 @@ def test_timeline_marks_spikes() -> None:
         (start + timedelta(minutes=19), Severity.ERROR, 30),
         (start + timedelta(minutes=19), Severity.INFO, 5),
     ]
-    buckets = _timeline(hist, start, NOW, timedelta(minutes=1), Thresholds())
+    buckets = timeline_buckets(hist, start, NOW, timedelta(minutes=1), Thresholds())
     assert len(buckets) == 20 and buckets[-1].spike and not buckets[5].spike
     assert buckets[-1].counts == (0, 30, 0, 5) and buckets[-1].errors == 30
 

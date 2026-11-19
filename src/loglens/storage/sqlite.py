@@ -452,6 +452,29 @@ class Storage:
             ).fetchall()
         return [(_EPOCH + b * size * _US, Severity(sev), n) for b, sev, n in rows]
 
+    def source_ids(self) -> list[str]:
+        """Every source that ever stored an entry (whether or not it still has any)."""
+        with self._lock:
+            return [sid for (sid,) in self._conn.execute("SELECT id FROM sources ORDER BY id")]
+
+    def source_counts(
+        self, since: datetime, until: datetime | None = None
+    ) -> list[tuple[str, str, Severity, int]]:
+        """``(source id, kind, severity, count)`` for every source with entries in
+        ``[since, until]``: the dashboard's per-source and per-kind totals in one query."""
+        # ponytail: scans the time range of every source; per-source index probes if a
+        # 10M-row database makes the dashboard refresh slow.
+        start = (since - _EPOCH) // _US
+        end = (until - _EPOCH) // _US if until is not None else 2**62
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT s.id, s.kind, e.severity, COUNT(*) FROM entries e "
+                "JOIN sources s ON s.key = e.source WHERE e.ts >= ? AND e.ts <= ? "
+                "GROUP BY e.source, e.severity",
+                (start, end),
+            ).fetchall()
+        return [(sid, kind, Severity(sev), n) for sid, kind, sev, n in rows]
+
     def entries_by_id(self, ids: Sequence[int]) -> list[LogEntry]:
         """Entries for ``ids`` in the given order; ids that no longer exist are skipped."""
         if not ids:
