@@ -2,7 +2,7 @@
 name = "loglens"
 version = "0.1.0"
 description = "Discover every log source on a Linux machine and explain it in plain language."
-readme = "CLAUDE.md"
+readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
@@ -46,6 +46,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/loglens"]
+
+# Data files ship inside the package (see loglens/resources.py).
+[tool.hatch.build.targets.wheel.force-include]
+"rules" = "loglens/_data/rules"
+"tests/fixtures/logs" = "loglens/_data/demo_logs"
+"demo" = "loglens/_data/demo_stack"
 
 [tool.ruff]
 line-length = 100

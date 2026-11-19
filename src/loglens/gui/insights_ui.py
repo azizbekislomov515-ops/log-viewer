@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
 from itertools import batched
@@ -19,6 +20,7 @@ from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import QDockWidget, QFileDialog, QWidget
 
 from loglens.core.models import Explanation, LogEntry, LogSource
+from loglens.explain import ExplanationEngine
 from loglens.explain.editor import user_rules_dir
 from loglens.export import incident_report, write_entries
 from loglens.gui.analyst import (
@@ -48,8 +50,11 @@ class Insights:
 
     def __init__(self, window: MainWindow) -> None:
         self.w = window
-        self.engine = make_engine(self.w.settings)
-        self.analyst = Analyst(lambda: make_engine(self.w.settings))
+        # Rules load on a worker thread so the first frame does not wait for them; the
+        # first explanation asked for (rarely that early) waits for the load to finish.
+        self._loader = ThreadPoolExecutor(max_workers=1, thread_name_prefix="loglens-rules")
+        self._engine: Future[ExplanationEngine] = self._loader.submit(make_engine, window.settings)
+        self.analyst = Analyst(lambda: self.engine)  # one engine, shared with analytics
         self.explain_panel = ExplainPanel(self.w)
         self.explain_panel.createRule.connect(self.create_rule)
         dock = QDockWidget("Explain", self.w)
@@ -139,8 +144,13 @@ class Insights:
                 return other.raw
         return ""
 
+    @property
+    def engine(self) -> ExplanationEngine:
+        """The explanation engine (waits for the background load the first time)."""
+        return self._engine.result()
+
     def _rules_changed(self, path: Path) -> None:
-        self.engine = make_engine(self.w.settings)
+        self._engine = self._loader.submit(make_engine, self.w.settings)
         self.analyst.reload()
         for tab in self.w._all_tabs():
             for view in tab.views:

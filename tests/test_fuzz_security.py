@@ -203,6 +203,7 @@ def test_keyword_right_before_a_secret_form_does_not_hide_it(
 def test_values_that_start_with_a_key_word_are_redacted_whole(
     key: str, inner: str, secret: str
 ) -> None:
+    assume(secret not in f"login {key}={inner} ok [REDACTED:password]")  # only the secret
     value = inner + secret
     redacted, _ = Redactor().redact(f"login {key}={value} ok")
     assert value not in redacted and secret not in redacted

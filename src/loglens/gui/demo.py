@@ -30,9 +30,9 @@ from loglens.core.models import (
     utc_now,
 )
 from loglens.parsers import Normalizer
+from loglens.resources import data_path
 
-# ponytail: repo-relative fixtures; ship a small demo corpus as package data in Phase 9.
-FIXTURES = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "logs"
+FIXTURES = data_path("demo_logs")
 
 _R, _S, _F = SourceStatus.RUNNING, SourceStatus.STOPPED, SourceStatus.FAILED
 #: (group id, group name, kind, [(source id, display name, status, fixture, metadata)])

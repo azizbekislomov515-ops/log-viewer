@@ -21,9 +21,10 @@ from loglens.core.models import (
     SourceKind,
     SourceStatus,
 )
+from loglens.resources import data_path
 
 # ponytail: repo-relative default; ship rules/ as package data when packaging (Phase 9).
-DEFAULT_CATALOG = Path(__file__).resolve().parents[4] / "rules" / "file_sources.yaml"
+DEFAULT_CATALOG = data_path("rules") / "file_sources.yaml"
 
 
 @dataclass(frozen=True, slots=True)

@@ -40,11 +40,14 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment, SandboxedEnvironment
 from loglens.core.models import Category, Explanation, LogEntry, LogSource, Severity
 from loglens.explain import schema
 from loglens.parsers.base import SourceMatch
+from loglens.resources import data_path
 
 log = logging.getLogger(__name__)
 
 # ponytail: repo-relative default; ship rules/ as package data when packaging (Phase 9).
-DEFAULT_RULES_DIR = Path(__file__).resolve().parents[3] / "rules"
+DEFAULT_RULES_DIR = data_path("rules")
+#: Safe loading only; the C implementation when PyYAML was built with libyaml.
+_YamlLoader: Any = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 #: Files in the rules directory that are not rule packs.
 NOT_PACKS = frozenset({"file_sources.yaml"})
 #: Regexes only look at this much of a message: bounds the cost of a crafted long line.
@@ -392,8 +395,10 @@ def _load_pack(
 ) -> Pack | None:
     try:
         text = path.read_text(encoding="utf-8")
-        root = yaml.compose(text, Loader=yaml.SafeLoader)
-        data = yaml.safe_load(text)
+        # One parse (libyaml when available): the node tree gives line numbers for
+        # messages, and the data is constructed from the same tree.
+        root = yaml.compose(text, Loader=_YamlLoader)
+        data = _YamlLoader("").construct_document(root) if root is not None else None
     except (OSError, UnicodeDecodeError) as exc:
         issues.append(LoadIssue(path, 0, f"cannot read: {exc}"))
         return None
@@ -599,7 +604,7 @@ def _template(
         raise _RuleError(violation, [key])
     unknown = meta.find_undeclared_variables(ast) - known
     try:
-        template = env.from_string(source)
+        template = env.from_string(ast)  # compile the tree already parsed and checked
     except (TemplateSyntaxError, ValueError, OverflowError, MemoryError) as exc:
         raise _RuleError(f"bad template: {exc}", [key]) from None
     if key == "action" and not _all_shell_quoted(ast):
