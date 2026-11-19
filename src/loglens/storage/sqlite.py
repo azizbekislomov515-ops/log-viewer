@@ -17,11 +17,15 @@ import logging
 import os
 import sqlite3
 import threading
+import time
+from array import array
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+import regex
 
 from loglens.core.models import LogEntry, LogSource, Severity, utc_now
 
@@ -62,7 +66,17 @@ MIGRATIONS: tuple[str, ...] = (
         VALUES ('delete', old.id, old.message);
     END;
     """,
+    # 2: the GUI pages a filtered view by id. This covering index serves
+    # "WHERE source IN (...) [AND severity/ts filters] ORDER BY id" without a sort.
+    """
+    CREATE INDEX entries_source_id ON entries(source, id, severity, ts);
+    """,
 )
+
+#: A regex search gives up after this long in total ...
+REGEX_BUDGET_S = 10.0
+#: ... or when one message takes longer than this (catastrophic backtracking).
+REGEX_LINE_TIMEOUT_S = 0.05
 
 _SELECT = """
     SELECT e.id, s.id, e.ts, e.severity, e.message, e.raw, e.fields, e.parsed
@@ -72,6 +86,36 @@ _SELECT = """
 
 class StorageError(RuntimeError):
     """The database cannot be used (e.g. created by a newer LogLens)."""
+
+
+class SearchError(ValueError):
+    """A search could not run: invalid regex, or it was too slow and was stopped."""
+
+
+@dataclass(frozen=True, slots=True)
+class EntryQuery:
+    """A filtered view of entries, ordered by id (= arrival order).
+
+    ``severities`` None means all. ``text`` is a full-text query (every word must match,
+    see ``search``); ``regex`` is a Python-style regular expression run on the message.
+    """
+
+    source_ids: tuple[str, ...]
+    severities: frozenset[Severity] | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    text: str = ""
+    regex: str | None = None
+    ignore_case: bool = True
+
+    def accepts(self, entry: LogEntry) -> bool:
+        """Whether ``entry`` belongs to this view, ignoring ``text``/``regex``."""
+        return (
+            entry.source_id in self.source_ids
+            and (self.severities is None or entry.severity in self.severities)
+            and (self.since is None or entry.timestamp >= self.since)
+            and (self.until is None or entry.timestamp <= self.until)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,10 +270,11 @@ class Storage:
     ) -> list[LogEntry]:
         """Full-text search on messages, newest first.
 
-        Every whitespace-separated word must match (as a phrase: ``10.0.0.5`` works);
+        Every whitespace-separated word must match as a prefix (``fail`` finds "Failed";
+        ``10.0.0.5`` works as a phrase);
         FTS5 query syntax is neutralized, so user input cannot break the query.
         """
-        query = " ".join('"' + word.replace('"', '""') + '"' for word in text.split())
+        query = _fts_query(text)
         if not query:
             return []
         ids = list(source_ids)
@@ -241,6 +286,81 @@ class Storage:
         with self._lock:
             rows = self._conn.execute(sql, (query, *ids, limit)).fetchall()
         return [_entry(r) for r in rows]
+
+    def entry_ids(self, query: EntryQuery) -> tuple[array[int], array[int]]:
+        """Ids (ascending) and severities of every entry the query selects.
+
+        Two compact arrays (9 bytes per row) instead of entries, so a view of millions of
+        rows can be paged by row number. Raises ``SearchError`` for a bad or too slow regex.
+        """
+        ids: array[int] = array("q")
+        severities: array[int] = array("b")
+        with self._lock:
+            sql, params = self._query_sql(query)
+            matcher = _RegexMatcher(query) if query.regex else None
+            if matcher is not None:
+                self._conn.create_function("loglens_match", 1, matcher, deterministic=True)
+                deadline = time.monotonic() + REGEX_BUDGET_S
+                self._conn.set_progress_handler(lambda: time.monotonic() > deadline, 10_000)
+            try:
+                for entry_id, severity in self._conn.execute(sql, params):
+                    ids.append(entry_id)
+                    severities.append(severity)
+            except sqlite3.OperationalError as exc:
+                if matcher is None:
+                    raise
+                if matcher.timed_out:
+                    raise SearchError(
+                        "regex is too slow on a line (catastrophic backtracking)"
+                    ) from None
+                if "interrupted" in str(exc):
+                    raise SearchError(f"regex search stopped after {REGEX_BUDGET_S:g} s") from None
+                raise
+            finally:
+                if matcher is not None:
+                    self._conn.set_progress_handler(None, 0)
+        return ids, severities
+
+    def entries_by_id(self, ids: Sequence[int]) -> list[LogEntry]:
+        """Entries for ``ids`` in the given order; ids that no longer exist are skipped."""
+        if not ids:
+            return []
+        marks = ",".join("?" * len(ids))
+        with self._lock:
+            rows = self._conn.execute(f"{_SELECT} WHERE e.id IN ({marks})", list(ids)).fetchall()
+        by_id = {r[0]: _entry(r) for r in rows}
+        return [by_id[i] for i in ids if i in by_id]
+
+    def _query_sql(self, query: EntryQuery) -> tuple[str, list[Any]]:
+        """SQL for ``entry_ids`` (call with the lock held). Source keys are resolved first:
+        with one source, ``source = ?`` lets the covering index return rows in id order
+        (no sort); several sources need a sort, which SQLite does in its temp B-tree."""
+        keys = [
+            key
+            for (key,) in self._conn.execute(
+                f"SELECT key FROM sources WHERE id IN ({_marks(query.source_ids)})",  # noqa: S608
+                list(query.source_ids),
+            )
+        ]
+        where = ["source = ?" if len(keys) == 1 else f"source IN ({_marks(keys)})"]
+        params: list[Any] = list(keys)
+        if query.severities is not None:
+            where.append(f"severity IN ({_marks(query.severities)})")
+            params += sorted(int(s) for s in query.severities)
+        if query.since is not None:
+            where.append("ts >= ?")
+            params.append((query.since - _EPOCH) // _US)
+        if query.until is not None:
+            where.append("ts <= ?")
+            params.append((query.until - _EPOCH) // _US)
+        if query.regex:
+            where.append("loglens_match(message)")
+        elif fts := _fts_query(query.text):
+            where.append("id IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?)")
+            params.append(fts)
+        # Only "?" placeholders and fixed SQL fragments are interpolated; values are params.
+        sql = f"SELECT id, severity FROM entries WHERE {' AND '.join(where)} ORDER BY id"  # noqa: S608
+        return sql, params
 
     def count(self, source_id: str | None = None) -> int:
         """Number of stored entries (for one source or all)."""
@@ -325,6 +445,38 @@ def migrate(conn: sqlite3.Connection) -> int:
             raise
         log.info("database migrated", extra={"version": target})
     return len(MIGRATIONS)
+
+
+def _fts_query(text: str) -> str:
+    """Every word as a quoted prefix phrase (``"fail"*`` finds "Failed"): FTS5 syntax in
+    user input cannot break the query."""
+    return " ".join('"' + word.replace('"', '""') + '"*' for word in text.split())
+
+
+def _marks(values: Iterable[object]) -> str:
+    return ",".join("?" for _ in values) or "NULL"
+
+
+class _RegexMatcher:
+    """SQL function body. ``regex`` (not ``re``) so one line can time out, and
+    ``concurrent=True`` so matching releases the GIL and never freezes the GUI thread.
+    SQLite hides the exception a function raises, so a timeout is also flagged here."""
+
+    def __init__(self, query: EntryQuery) -> None:
+        flags = regex.IGNORECASE if query.ignore_case else 0
+        try:
+            self._pattern = regex.compile(query.regex or "", flags)
+        except regex.error as exc:
+            raise SearchError(f"invalid regex: {exc}") from None
+        self.timed_out = False
+
+    def __call__(self, message: str) -> bool:
+        try:
+            found = self._pattern.search(message, timeout=REGEX_LINE_TIMEOUT_S, concurrent=True)
+        except TimeoutError:
+            self.timed_out = True
+            raise
+        return found is not None
 
 
 def _entry(row: tuple[Any, ...]) -> LogEntry:
